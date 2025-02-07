@@ -617,7 +617,7 @@ for file_path in root_dir.rglob("*.phhs"):
 
     files_read_counter += 1
 
-    #das
+    
     # Logging and performance info for the file that was finished.
     batch_end_time = time.time()
     performance_logger.info(f"the number {files_read_counter} batch took {batch_end_time - batch_start_time:.2f} seconds")
