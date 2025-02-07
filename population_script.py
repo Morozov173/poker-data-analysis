@@ -306,6 +306,40 @@ def set_up_loggers():
 
 
 
+# Inserts data into database using executemany #TODO add better commenting to function
+def execute_bulk_insert(data, query, cursor = None, commit = True, flatten = False):
+    if cursor is None:
+        try:
+            connection = mysql.connector.connect(
+                host="localhost",
+                user="root",
+                password="5542",
+                database="pokerhands_db"
+            )
+            cursor = connection.cursor()
+        except Exception as e:
+            logger.exception("Couldn't connect to the database.")
+            print("Couldn't connect to the database.")
+            print(e)
+
+    try:
+        table_name = query.split()[2]
+    except IndexError:
+        table_name = "unknown_table"  # Fallback if query format is unexpected
+        logger.exception(f"During insertion the passed query parameter was invalid")
+
+    if flatten:
+        data = list(chain.from_iterable(data))
+    try: 
+        cursor.executemany(data, query)
+        if commit:
+            cursor.connection.commit()
+        logger.info(f"Insertion into the {table_name} table completed succesfully")
+    except:
+        cursor.connection.rollback()
+        logger.exception(f"Insertion into the {table_name} table failed.")
+
+
 
 # Preserve the last 15 lines of the previous `info.log` file before resetting it
 with open("info.log", 'r') as file:
@@ -333,22 +367,8 @@ except Exception as e:
     print(e)
 
 cursor = connection.cursor()
-# Query to insert a row into the games table
-insert_games_query = """
-INSERT INTO games (game_type_id, amount_of_players, flop, turn, river, final_pot)
-VALUES (%s, %s, %s, %s, %s, %s)
-"""
-# Query to insert a row into the players_games table
-insert_players_games_query = """
-INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
-VALUES (%s, %s, %s, %s, %s, %s) """
 
-# Query to insert a row into the actions table
-insert_actions_query = """
-INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
-VALUES (%s, %s, %s, %s, %s, %s, %s) """
 
-# 
 start_time = time.time()
 current_file_path = None
 hand_counter = 0
@@ -455,10 +475,12 @@ for file_path in root_dir.rglob("*.phhs"):
         action_id = 1
         last_highest_bet = bb_amount
         last_to_bet = 'p2' #If the hand finished with no bets then big blind position won
-        df_players_bets = create_bets_array(hand['blinds_or_straddles'], amount_of_players)
+        df_bets_in_hand = create_bets_array(hand['blinds_or_straddles'], amount_of_players)
 
 
         print("The actions for the current hand are as follows: ")
+
+
         for action in hand['actions'][amount_of_players:]:
             temp_action = [game_id, action_id, None,None, round_counter, None, end_pot]
             action = action.split()
@@ -487,9 +509,9 @@ for file_path in root_dir.rglob("*.phhs"):
             # If it's a CALL
             elif action_type == 'cc':
                 # Adds the amount that was called
-                temp_action[5] = float(last_highest_bet - df_players_bets.loc[round_counter, position])
+                temp_action[5] = float(last_highest_bet - df_bets_in_hand.loc[round_counter, position])
                 # saves the call amount in the bets dataframe
-                df_players_bets.loc[round_counter, position] += temp_action[5]
+                df_bets_in_hand.loc[round_counter, position] += temp_action[5]
                 end_pot += temp_action[5]
 
             # if it's a RAISE or RE-RAISE
@@ -499,9 +521,9 @@ for file_path in root_dir.rglob("*.phhs"):
                     logger.error(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:GAME_ID {game_id}:ACTION_ID: {action_id} - Negative bet amount was made.")
                     unrecoverable_data_detected = True # Raises flag to skip the current hand
                     break
-                actual_bet_amount = float(bet_amount - df_players_bets.loc[round_counter, position])
+                actual_bet_amount = float(bet_amount - df_bets_in_hand.loc[round_counter, position])
                 last_highest_bet = bet_amount
-                df_players_bets.loc[round_counter, position] = bet_amount
+                df_bets_in_hand.loc[round_counter, position] = bet_amount
                 temp_action[5] = bet_amount
                 end_pot += actual_bet_amount
                 last_to_bet = position
@@ -540,12 +562,12 @@ for file_path in root_dir.rglob("*.phhs"):
         actions.append(current_hand_actions)
 
 
-        finishing_stacks = calculate_finishing_stacks(df_players_bets, hand['starting_stacks'], hole_cards, community_cards, last_to_bet)
+        finishing_stacks = calculate_finishing_stacks(df_bets_in_hand, hand['starting_stacks'], hole_cards, community_cards, last_to_bet)
         
         # Print-outs for debugging
         print(f"the community cards are: \n{community_cards}")
         print(f"the hole cards are: \n{hole_cards}")
-        print(f"the bets made during the hand are: \n{df_players_bets}")
+        print(f"the bets made during the hand are: \n{df_bets_in_hand}")
         print(f"starting stacks are: \n{hand['starting_stacks']}")
         print(f"finishing stacks are: \n{finishing_stacks}")
 
@@ -553,61 +575,61 @@ for file_path in root_dir.rglob("*.phhs"):
 
         # Table: games ✔
         # Functionality: Creates and Formats a 'games' tuple to be inserted as a row into the "games" table.
+        # 
         games.append((game_type_id, amount_of_players,community_cards[0], community_cards[1], community_cards[2], float(end_pot)))
 
 
         # Table: players_games ✔, players_static ✔
         # Functionality: Creates and Formats a tuple for each player that was in the hand and inserts them into the
         # players_games list to be inserted into the players_games table.
-        for i, player in enumerate(hand['players']):
+        # TODO make into function 
+        for i, player_id in enumerate(hand['players']):
             player_winnings = float(finishing_stacks.iloc[i] - hand['starting_stacks'][i])
-            players_static.append(player)
-            players_static.append(player_winnings)
+            players_static.append((player_id, player_winnings))
 
-            players_games_row = (game_id, player, hand['starting_stacks'][i], f'p{i+1}', hole_cards[i], float(finishing_stacks.iloc[i] - hand['starting_stacks'][i]))
+            players_games_row = (game_id, player_id, hand['starting_stacks'][i], f'p{i+1}', hole_cards[i], float(finishing_stacks.iloc[i] - hand['starting_stacks'][i]))
             current_hand_players_games.append(players_games_row)
-
         players_games.append(current_hand_players_games) 
         
+
+
         hand_counter += 1
         game_id += 1 # end of hand loop
 
 
     try:
-        # Insertion into games table
-        cursor.executemany(insert_games_query, games)
-        connection.commit()
-        logger.info("games inserted succesfully")
+        insert_games_query = """
+        INSERT INTO games (game_type_id, amount_of_players, flop, turn, river, final_pot)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        execute_bulk_insert(insert_games_query, games, cursor, commit=False, flatten=False)
 
-        # Insertion into players_games table
-        flattened_players_games = list(chain.from_iterable(players_games))
-        cursor.executemany(insert_players_games_query, flattened_players_games)
-        logger.info("players_games inserted succesfully")
-        
-        # Insertion into actions table
-        flattened_actions = list(chain.from_iterable(actions))
-        cursor.executemany(insert_actions_query, flattened_actions)
-        logger.info("actions inserted succesfully")
+        insert_players_games_query = """
+        INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
+        VALUES (%s, %s, %s, %s, %s, %s) """
+        execute_bulk_insert(insert_players_games_query, players_games, cursor, commit=False, flatten=True)
 
-        # Insertion into players_static table
-        format_string = ', '.join(["(%s, %s)"] * (len(players_static)//2))
-        insert_players_static_query = f"""INSERT INTO players_static (player_id, total_winnings)
-        VALUES {format_string}
+        insert_actions_query = """
+        INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
+        VALUES (%s, %s, %s, %s, %s, %s, %s) """
+        execute_bulk_insert(insert_actions_query, actions, cursor, commit=False, flatten=True)
+
+        insert_players_static_query = """INSERT INTO players_static (player_id, total_winnings)
+        VALUES (%s, %s)
         ON DUPLICATE KEY UPDATE
         total_winnings = total_winnings + VALUES(total_winnings),
         hands_played =  hands_played + 1"""
-        cursor.execute(insert_players_static_query, tuple(players_static))
-        logger.info("players_static inserted succesfully")
+        execute_bulk_insert(insert_players_static_query, players_static, cursor, commit=False, flatten=False)
 
-        # End of processesing the current file
         connection.commit()
         logger.info("all tables were commited succesfully")
-        
+
     except KeyboardInterrupt:
         connection.rollback()
         cursor.close()
         connection.close()
         print("Keyboard Interrupt: Cleaning up before exit...")
+        logger.exception(f"{str(current_file_path)[-50:]}: Loading was interrupted via keyboard.")
         end_time = time.time()
         performance_logger.info(f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours")
     except Exception as e:
