@@ -305,9 +305,16 @@ def set_up_loggers():
     return logger, performance_logger
 
 
+# # TODO finish function
+# def process_actions_in_hand(actions_of_hand, community_cards, hole_cards, df_bets_in_hand, sb_amount, bb_amount):
+#     round_counter = 0
+#     action_id = 1
+#     pot = sb_amount + bb_amount # Intilize the starting pot amount
+#     last_highest_bet = bb_amount
+#     last_to_bet = 'p2' #If the hand finished with no bets then big blind position won
 
 # Inserts data into database using executemany #TODO add better commenting to function
-def execute_bulk_insert(data, query, cursor = None, commit = True, flatten = False):
+def execute_bulk_insert(query, data, cursor = None, commit = True, flatten = False):
     if cursor is None:
         try:
             connection = mysql.connector.connect(
@@ -319,8 +326,6 @@ def execute_bulk_insert(data, query, cursor = None, commit = True, flatten = Fal
             cursor = connection.cursor()
         except Exception as e:
             logger.exception("Couldn't connect to the database.")
-            print("Couldn't connect to the database.")
-            print(e)
 
     try:
         table_name = query.split()[2]
@@ -330,8 +335,9 @@ def execute_bulk_insert(data, query, cursor = None, commit = True, flatten = Fal
 
     if flatten:
         data = list(chain.from_iterable(data))
+
     try: 
-        cursor.executemany(data, query)
+        cursor.executemany(query, data)
         if commit:
             cursor.connection.commit()
         logger.info(f"Insertion into the {table_name} table completed succesfully")
@@ -344,7 +350,6 @@ def execute_bulk_insert(data, query, cursor = None, commit = True, flatten = Fal
 # Preserve the last 15 lines of the previous `info.log` file before resetting it
 with open("info.log", 'r') as file:
     last_lines = deque(file, 25) # Read last 25 log lines
-
 
 # Save the preserved log lines into a separate file (`last_processed_file`) for later use
 with open('last_processed_file', "w") as file:
@@ -622,7 +627,7 @@ for file_path in root_dir.rglob("*.phhs"):
         execute_bulk_insert(insert_players_static_query, players_static, cursor, commit=False, flatten=False)
 
         connection.commit()
-        logger.info("all tables were commited succesfully")
+        logger.info("All tables were commited succesfully")
 
     except KeyboardInterrupt:
         connection.rollback()
