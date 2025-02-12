@@ -16,7 +16,7 @@ position IS NULL OR
 hand IS NULL OR
 winnings IS NULL;
 
--- Checks for missing values in the players_games table
+-- Checks for missing values in the actions table
 SELECT * FROM actions
 WHERE 
 game_id IS NULL OR 
@@ -26,7 +26,7 @@ action_type IS NULL OR
 round IS NULL OR
 pot_size IS NULL;
     
--- Checks for missing values in the players_games table
+-- Checks for missing values in the players_static table
 SELECT * FROM players_static
 WHERE 
 player_id IS NULL OR 

@@ -2,7 +2,7 @@ import pandas as pd
 import re
 import ast
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, pooling
 from treys import Card, Evaluator
 import itertools
 from pathlib import Path
@@ -10,10 +10,11 @@ import time
 from itertools import chain
 import logging
 from collections import Counter, deque
-import gc
+import multiprocessing
+import concurrent.futures
+import os
 
-
-# Checks if a given string is a python literal
+# Function to check if a given string is a valid Python literal (e.g., list, dict, etc.)
 def is_literal(string):
     try:
         ast.literal_eval(string)
@@ -22,7 +23,7 @@ def is_literal(string):
         return False
 
 
-# Checks if a string is a number
+# Function to check if a string is a valid number (integer or float)
 def is_number(string):
     try:
         float(string)  # Attempt to convert the string to a float
@@ -31,20 +32,16 @@ def is_number(string):
         return False
 
 
-# recieves a filepath to a phhs format file and returns a list where each item in the list is a single hand in dictionary format
+# Function to read a PHHS file and parse it into a list of hands in dictionary format
 def read_hands_from_phhs(file_path):
-
-    # Reads file into memory via the given fila path parrameter
-
     with open(file_path, 'r') as file:
         content = file.read()
 
-    # Splits all the hands in the file into seperate list items
+    # Split the content into individual hands
     content = re.split(r'\[\d+\]', content)
     del content[0]
     content = [block.strip() for block in content]
 
-    # Converts each hand into a dictionary format
     list_of_hands = []
     counter = 1
     most_common_min_bet = None
@@ -59,11 +56,17 @@ def read_hands_from_phhs(file_path):
             else:
                 temp_hand[key] = value
 
-        
-        # Handles missing seat_count parameter to determine if it's 6Max or 9Max - Fixes hand
+
+
+        # Track most common min_bet from first 25 hands
+        if counter < 24:
+            min_bet_occurrences[temp_hand['min_bet']] += 1
+        if counter == 25:
+            most_common_min_bet = min_bet_occurrences.most_common(1)[0][0]
+
+        # Handles missing seat_count 
         if 'seat_count' not in temp_hand:
             if max(temp_hand['seats']) > 9:
-                logger.warning(f"{str(current_file_path)[-50:]}:HAND {counter}:seat_count variable exceeded 9.")
                 counter += 1
                 continue
             if max(temp_hand['seats']) <= 6:
@@ -71,29 +74,17 @@ def read_hands_from_phhs(file_path):
             else:
                 temp_hand['seat_count'] = 9
 
-        
-
-        # Handles an invalid amount of players in a game - Drops hand
+        # Skip hand if invalid number of players
         if len(temp_hand['players']) > 9:
-            logger.warning(f"{str(current_file_path)[-50:]}:HAND {counter}:length of the players list exceeded 9.")
             counter += 1
             continue
-        # Validates min_bet value by checking the min bet value of the two previus hands
         
-        # Finds most common min bet value and handles min_bet values that don't match the common one
-        if counter < 24:
-            min_bet_occurrences[temp_hand['min_bet']] += 1
-        if counter == 25:
-            most_common_min_bet = min_bet_occurrences.most_common(1)[0][0]
-
-        # Checks that the min_bet value is matching the most common - Fixes hand
+        # Fix mismatched min_bet value
         if most_common_min_bet != None and temp_hand['min_bet'] != most_common_min_bet:
-            logger.warning(f"{str(current_file_path)[-50:]}:HAND {counter}: min_bet value is invalid it's {temp_hand['min_bet']} While the most common one is {most_common_min_bet}.")
             temp_hand['min_bet'] = most_common_min_bet
 
-        # Handles invalid starting_stcaks list - Fixes hand
+        # Handle invalid starting_stacks
         if temp_hand['blinds_or_straddles'][1] != temp_hand['min_bet'] or temp_hand['blinds_or_straddles'][0] == 0 or temp_hand['blinds_or_straddles'][0] == temp_hand['blinds_or_straddles'][1]:
-            logger.warning(f"{str(current_file_path)[-50:]}:HAND {counter}: List 'blinds_straddles' is invalid. big_blind value doesn't match min_bet value {temp_hand['blinds_or_straddles']}.")
 
             if temp_hand['min_bet'] == 0.25:
                 temp_hand['blinds_or_straddles'][1] = temp_hand['min_bet']
@@ -102,10 +93,11 @@ def read_hands_from_phhs(file_path):
                 temp_hand['blinds_or_straddles'][1] = temp_hand['min_bet']
                 temp_hand['blinds_or_straddles'][0] = int(temp_hand['min_bet'] / 2) if (temp_hand['min_bet'] / 2).is_integer() else round(temp_hand['min_bet'] / 2, 2)
 
-        # Handles missing starting stacks values - Fixes hand
+        # Handle missing starting stack values
         if 'inf' in temp_hand['starting_stacks']:
             default_starting_stack = temp_hand['min_bet'] * 100
             temp_hand['starting_stacks'] = [default_starting_stack for starting_stack in temp_hand['players']]
+
 
         list_of_hands.append(temp_hand)
         counter += 1
@@ -113,8 +105,7 @@ def read_hands_from_phhs(file_path):
     return list_of_hands
 
 
-# Recieves the starting bets (small and big blinds) and the number of players
-# returns a bet array where the columns are the players and each row is the bets they performed on the corresponding round
+# Function to create a bet array for a given hand, based on the number of players and blinds
 def create_bets_array(starting_blinds, amount_of_players):
     columns = [f'p{i+1}' for i in range(amount_of_players)]
     df = pd.DataFrame(
@@ -122,7 +113,7 @@ def create_bets_array(starting_blinds, amount_of_players):
     return df
 
 
-# recieves hole cards of players and the board and returns the winners of the hand
+# Function to find the winning hand based on hole cards and community cards
 def find_winning_hands(hole_cards, community_cards):
     encoded_community_cards = []
     encoded_community_cards.extend(re.findall("..?", community_cards[0]))
@@ -145,8 +136,8 @@ def find_winning_hands(hole_cards, community_cards):
     return winners
 
 
-# Recieves needed info about how a hand went and returns a list with the stacks the players finished the hand with
-def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, community_cards, last_to_bet):
+# Function to calculate finishing stacks after all actions are processed for a given hand
+def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, community_cards, last_to_bet, amount_of_players):
     total_bets = df_player_bets.sum()
     finishing_stacks = pd.Series(
         starting_stacks, index=total_bets.index) - total_bets
@@ -154,26 +145,26 @@ def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, comm
     # Hand didn't go to showdown, last to bet won.
     if hole_cards.count('????') == amount_of_players:
         finishing_stacks.iloc[int(last_to_bet[1])-1] += total_bets.sum()
-        print('Hand didnt go to shodown')
+        #print('Hand didnt go to shodown')
 
     # Only one player has his cards revealed meaning he won for sure
     elif amount_of_players - hole_cards.count('????') == 1:
         for i, starting_hand in enumerate(hole_cards):
             if starting_hand != '????':
                 finishing_stacks.iloc[i] += total_bets.sum()
-        print('Only one player has his cards revealed meaning he won for sure')
+        #print('Only one player has his cards revealed meaning he won for sure')
 
     # Hand went to showdown
     else:
         if community_cards[0] is None:
-                logger.error(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:Went to showdown without community cards.")
+                print(f"Hand went to showdown without community cards.")
                 return starting_stacks
         winners = find_winning_hands(hole_cards, community_cards)
         paid_to_winner = total_bets.sum() / sum(winners)
         for i, winner in enumerate(winners):
             if winner is True:
                 finishing_stacks.iloc[i] += paid_to_winner
-        print(f'Hand went to showdown! and p{i+1} won!')
+        #print(f'Hand went to showdown! and p{i+1} won!')
 
     return finishing_stacks
 
@@ -184,7 +175,7 @@ def load_game_types_from_db():
         host="localhost",
         user="root",
         password="5542",
-        database="pokerhands_db"
+        database="pokerhands_db_testing"
     )
     cursor = connection.cursor()
     cursor.execute("SELECT * FROM game_types")
@@ -219,7 +210,7 @@ def find_game_type(df_game_types, seat_count, sb_amount, bb_amount, currency):
             host="localhost",
             user="root",
             password="5542",
-            database="pokerhands_db"
+            database="pokerhands_db_testing"
         )
         cursor = connection.cursor()
         cursor.execute("""INSERT INTO game_types (seat_count, sb_amount, bb_amount, currency, variant)
@@ -233,13 +224,13 @@ def find_game_type(df_game_types, seat_count, sb_amount, bb_amount, currency):
         return int(game_type_id)
 
 
-# returns the highest game_id in the games table of the database. if null returns 1
+# Function to fetch the highest game_id from the games table, or return 1 if the table is empty
 def fetch_game_id():
     connection = mysql.connector.connect(
         host="localhost",
         user="root",
         password="5542",
-        database="pokerhands_db"
+        database="pokerhands_db_testing"
     )
     cursor = connection.cursor()
     cursor.execute("SELECT MAX(game_id) FROM games")
@@ -250,25 +241,53 @@ def fetch_game_id():
     connection.close()
 
     if game_id:
-        print(f"current game_id is: {game_id+1}")
+        #print(f"current game_id is: {game_id+1}")
         return game_id+1
     else:
-        print(f"current game_id is: 1")
+        #print(f"current game_id is: 1")
         return 1
 
 
-# Exctracts file path from info.log starting processing line
+# Function to parse the file path from a string
 def extract_file_path(string):
     starting_index =  string.find(':') + 1
     if starting_index == 0:
-        logger.error(f"Couldn't find file_path in the provided string in the exctract_file_path function: {string}")
+        print(f"Couldn't find file_path in the provided string in the exctract_file_path function: {string}")
         return None
-    ending_index = string.find(':', starting_index+2)
-    file_path = string[starting_index:ending_index]
+    file_path = string[starting_index:]
+
     return file_path.strip()
 
 
-# set ups the regular logger. outputs warnings+ and info into two seperate files. and another file for tracking performance
+# Function to determine the starting file for parsing based on the last processed batch or if the database is empty
+def determine_starting_file_for_parsing(game_id):
+    if game_id != 1:
+        start_parsing = False # If will find starting file first
+
+        print(f"Continuing population of database from the last inserted file")
+        skip_first_file = False
+        
+        with open("last_processed_file", 'r') as file:
+            lines = file.readlines()
+
+        if lines[1] == 'SUCCESFULL':
+            starting_file_path = extract_file_path(lines[0])
+            skip_first_file = True
+            print(f"Last batch was inserted succesfully so starting file is the last file of that batch: {starting_file_path} AND skip_first_file is True")
+            return start_parsing, starting_file_path, skip_first_file
+        
+        else:
+            skip_first_file = False
+            starting_file_path = extract_file_path(lines[0])
+            print(f"Last batch was inserted UNsuccesfully so starting file is the first file of that batch: {starting_file_path} AND skip_first_file is False")
+            return start_parsing, starting_file_path, skip_first_file
+    else:
+        start_parsing = True # If the database is empty(game_id = 1), start parsing from the first file
+        # logger.info(f"Starting database population from scratch.")
+        return start_parsing, None, None
+       
+
+# Function to set up loggers for tracking performance, warnings, and general info
 def set_up_loggers():
     # Logger set up
     performance_logger = logging.getLogger("performance_logger")
@@ -304,190 +323,43 @@ def set_up_loggers():
     
     return logger, performance_logger
 
+# # TODO finish comment for function
+def create_generator_of_phhs_batches(root_dir, start_parsing, starting_file_path, skip_first_file,  batch_size = os.cpu_count()):
+    batch = []
+    if starting_file_path:
+        starting_file_path = Path(starting_file_path)
 
-# # TODO finish function
-# def process_actions_in_hand(actions_of_hand, community_cards, hole_cards, df_bets_in_hand, sb_amount, bb_amount):
-#     round_counter = 0
-#     action_id = 1
-#     pot = sb_amount + bb_amount # Intilize the starting pot amount
-#     last_highest_bet = bb_amount
-#     last_to_bet = 'p2' #If the hand finished with no bets then big blind position won
-
-# Inserts data into database using executemany #TODO add better commenting to function
-def execute_bulk_insert(query, data, cursor = None, commit = True, flatten = False):
-    if cursor is None:
-        try:
-            connection = mysql.connector.connect(
-                host="localhost",
-                user="root",
-                password="5542",
-                database="pokerhands_db"
-            )
-            cursor = connection.cursor()
-        except Exception as e:
-            logger.exception("Couldn't connect to the database.")
-
-    try:
-        table_name = query.split()[2]
-    except IndexError:
-        table_name = "unknown_table"  # Fallback if query format is unexpected
-        logger.exception(f"During insertion the passed query parameter was invalid")
-
-    if flatten:
-        data = list(chain.from_iterable(data))
-
-    try: 
-        cursor.executemany(query, data)
-        if commit:
-            cursor.connection.commit()
-        logger.info(f"Insertion into the {table_name} table completed succesfully")
-    except:
-        cursor.connection.rollback()
-        logger.exception(f"Insertion into the {table_name} table failed.")
+    for file_path in root_dir.rglob("*.phhs"):
+        if not start_parsing:
+            if starting_file_path == file_path:
+                start_parsing = True
+                print(f"File: {starting_file_path} was found!")
+                if skip_first_file:
+                    continue
+            else:
+                continue # Keep skipping until the correct file is found
 
 
-
-# Preserve the last 15 lines of the previous `info.log` file before resetting it
-with open("info.log", 'r') as file:
-    last_lines = deque(file, 25) # Read last 25 log lines
-
-# Save the preserved log lines into a separate file (`last_processed_file`) for later use
-with open('last_processed_file', "w") as file:
-    file.writelines(last_lines)
-
-# Reinitialize the loggers (this will reset all '.log' files)
-logger, performance_logger = set_up_loggers()
+        batch.append(file_path)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
-try:
-    connection = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="5542",
-        database="pokerhands_db"
-    )
-except Exception as e:
-    logger.exception("Couldn't connect to the database.")
-    print("Couldn't connect to the database.")
-    print(e)
+# # TODO finish comment for function
+def process_actions_in_hand(actions_of_hand, amount_of_players, community_cards, hole_cards, df_bets_in_hand, sb_amount, bb_amount, game_id):
+    round_counter = 0
+    action_id = 1
+    pot = sb_amount + bb_amount # Intilize the starting pot amount
+    last_highest_bet = bb_amount
+    last_to_bet = 'p2' #If the hand finished with no bets then big blind position won
+    unrecoverable_data_detected = False
+    processed_actions_of_hand = []
 
-cursor = connection.cursor()
-
-
-start_time = time.time()
-current_file_path = None
-hand_counter = 0
-root_dir = Path(r"D:\Programming\Poker Hands Dataset Zendoo\handhq")
-game_id = fetch_game_id()
-logger.info(f"Starting game_id: {game_id}\n")
-df_game_types = load_game_types_from_db()
-
-
-# If the database is empty, start parsing from the first file.
-# Otherwise, check the log for the last processed file:
-# - If the last file was successfully inserted, start at the next file.
-# - If it failed, retry from the same file
-if game_id != 1:
-    logger.info(f"Continuing population of database from the last inserted file")
-    skip_first_file = False
-    start_parsing = False
-    for line in reversed(last_lines):
-        print(f"The line is: {line}")
-        if skip_first_file == False and "Finished processing file succesfully" in line:
-            skip_first_file = True
-            logger.info(f"Last file was processed succesfully")
-            continue
-        if "Started processing file" in line:
-            print("Found last processed file")
-            try:
-                starting_file_path = Path(extract_file_path(line))
-                logger.info(f"last file to start processing was {starting_file_path}")
-            except Exception as e:
-                logger.exception(f"Couldn't convert exctracted starting_file filepath to Path object")
-            break # Stop after finding the last processed file
-else:
-    start_parsing = True # If the database is empty, start parsing from the first file
-    logger.info(f"Starting database population from scratch.")
-
-                
-            
-
-print(start_parsing)
-files_read_counter = 0
-# Iterate through all .phhs files in the root directory
-for file_path in root_dir.rglob("*.phhs"):
-    # Skip files until reaching the last processed file; then start parsing
-    if not start_parsing:
-        if starting_file_path == file_path:
-            start_parsing = True
-            logger.info(f"File: {starting_file_path} was found!")
-            if skip_first_file:
-                continue
-        else:
-            continue # Keep skipping until the correct file is found
-
-    # if starting_file == file_path:
-    #     found = True
-    #     logger.info(f"File: {starting_file} was found!")
-    #     #continue    # Include 'continue' only if you want to skip processing the starting file
-    # if found is False:
-    #     continue
-
-    # Lists to store data for batch insertion into corresponding database tables
-    actions = []        # Stores player actions for the 'actions' table
-    games = []          # Stores game metadata for the 'games' table
-    players_games = []  # Stores player-game relationships for the 'players_games' table
-    players_static = [] # Stores cumulative player stats for the 'players_static' table
-
-    logger.info(f"{file_path}:GAME_ID {game_id}: Started processing file.")
-    file_parsed_succesfully = True # Flag to track if file processing was successful
-    batch_start_time = time.time()
-    current_file_path = file_path
-    hand_counter = 0
-    
-    
-    
-    try: 
-        hands = read_hands_from_phhs(file_path)
-    except Exception as e:
-        logger.exception(f"{file_path}:Couldn't read file.")
-        print("Couldn't connect to the database.")
-        print(e)
-        continue
-
-    for hand in hands:
-        unrecoverable_data_detected = False
-        current_hand_actions = []
-        current_hand_players_games = []
-
-        amount_of_players = len(hand['players'])
-        hole_cards = ['????'] * amount_of_players
-        community_cards = [None, None, None]
-        sb_amount = hand['blinds_or_straddles'][0]
-        bb_amount = hand['blinds_or_straddles'][1]
-        starting_pot = sum(hand['blinds_or_straddles'])
-        game_type_id = find_game_type(df_game_types, hand['seat_count'], sb_amount, bb_amount, hand['currency_symbol'])
-
-        print(f"\n\ncurrent hand being parsed is number: {hand_counter+1} with game_id: {game_id}")
-        print(f"game type id is: {game_type_id}")
-        print(f"players in the hand are {hand['players']}")
-
-        # Table: actions ✔
-        # Functionality: Parses the 'action' of a given hand and exctracts relevant information and stores it.
-        # in addition formats it into rows and stores them in the 'actions' variable to later be inserted into the SQL Database
-        end_pot = starting_pot
-        round_counter = 0
-        action_id = 1
-        last_highest_bet = bb_amount
-        last_to_bet = 'p2' #If the hand finished with no bets then big blind position won
-        df_bets_in_hand = create_bets_array(hand['blinds_or_straddles'], amount_of_players)
-
-
-        print("The actions for the current hand are as follows: ")
-
-
-        for action in hand['actions'][amount_of_players:]:
-            temp_action = [game_id, action_id, None,None, round_counter, None, end_pot]
+    for action in actions_of_hand[amount_of_players:]:
+            temp_action = [game_id, action_id, None, None, round_counter, None, pot]
             action = action.split()
 
             # If it's the FLOP, TURN or RIVER and next ROUND starts
@@ -517,20 +389,22 @@ for file_path in root_dir.rglob("*.phhs"):
                 temp_action[5] = float(last_highest_bet - df_bets_in_hand.loc[round_counter, position])
                 # saves the call amount in the bets dataframe
                 df_bets_in_hand.loc[round_counter, position] += temp_action[5]
-                end_pot += temp_action[5]
+                pot += temp_action[5]
 
             # if it's a RAISE or RE-RAISE
             elif action_type == 'cbr':
                 bet_amount = float(action[2])
+
                 if bet_amount <= 0: # Checks for invalid data
-                    logger.error(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:GAME_ID {game_id}:ACTION_ID: {action_id} - Negative bet amount was made.")
+                    print(f"UNRECOREVABLE DATA DETECTED!. A MINUS BET AMOUNT")
                     unrecoverable_data_detected = True # Raises flag to skip the current hand
-                    break
+                    return processed_actions_of_hand, unrecoverable_data_detected, last_to_bet, pot
+                
                 actual_bet_amount = float(bet_amount - df_bets_in_hand.loc[round_counter, position])
                 last_highest_bet = bet_amount
                 df_bets_in_hand.loc[round_counter, position] = bet_amount
                 temp_action[5] = bet_amount
-                end_pot += actual_bet_amount
+                pot += actual_bet_amount
                 last_to_bet = position
 
             # if it's a SHOWDOWN
@@ -540,54 +414,95 @@ for file_path in root_dir.rglob("*.phhs"):
 
             action_id += 1
             temp_action[-1] = float(temp_action[-1])
-            print(temp_action)
-            current_hand_actions.append(tuple(temp_action))
+            #print(temp_action)
+            processed_actions_of_hand.append(tuple(temp_action))
+
+    return processed_actions_of_hand, unrecoverable_data_detected, last_to_bet, pot
 
 
+# # TODO finish comment for function
+def process_hands(path_to_phhs_file, shared_game_id, lock):
+    hands = read_hands_from_phhs(path_to_phhs_file)
+    #print(f"IM PROCESS_HANDS THAT WORKS ON {path_to_phhs_file}! MY GAME ID IS {shared_game_id['game_id']}")
+    actions = []        # Stores player actions for the 'actions' table
+    games = []          # Stores game metadata for the 'games' table
+    players_games = []  # Stores player-game relationships for the 'players_games' table
+    players_static = [] # Stores cumulative player stats for the 'players_static' table
 
 
+    hand_counter = 0
+    for hand in hands:
+        with lock:
+            game_id = shared_game_id['game_id']
+            shared_game_id['game_id'] = shared_game_id['game_id'] +1
+
+        #print(f"IM PROCESS_HANDS THAT WORKS ON {path_to_phhs_file}! MY GAME ID IS {game_id}")
+        unrecoverable_data_detected = False
+        current_hand_actions = []
+        current_hand_players_games = []
+
+        amount_of_players = len(hand['players'])
+        hole_cards = ['????'] * amount_of_players
+        community_cards = [None, None, None]
+        sb_amount = hand['blinds_or_straddles'][0]
+        bb_amount = hand['blinds_or_straddles'][1]
+        starting_pot = sum(hand['blinds_or_straddles'])
+        game_type_id = find_game_type(df_game_types, hand['seat_count'], sb_amount, bb_amount, hand['currency_symbol'])
+
+        # print(f"\n\ncurrent hand being parsed is number: {hand_counter+1} with game_id: {game_id}")
+        # print(f"game type id is: {game_type_id}")
+        # print(f"players in the hand are {hand['players']}")
+
+        # Table: actions ✔
+        # Functionality: Parses the 'action' of a given hand and exctracts relevant information and stores it.
+        # in addition formats it into rows and stores them in the 'actions' variable to later be inserted into the SQL Database
+
+        df_bets_in_hand = create_bets_array(hand['blinds_or_straddles'], amount_of_players)
+        #print("The actions for the current hand are as follows: ")
+        current_hand_actions, unrecoverable_data_detected, last_to_bet, end_pot = process_actions_in_hand(hand['actions'], amount_of_players, community_cards, hole_cards, df_bets_in_hand, sb_amount, bb_amount, game_id)
+
+        
+
+        # Log and skip the hand if no player actions were recorded (indicating missing or invalid data)
+        if not current_hand_actions:
+            #print(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:GAME_ID {game_id}: Corrupted data, no actions ocurred in hand")
+            unrecoverable_data_detected = True
+
+
+        # Log and skip the hand if the flop contains fewer than 3 cards (invalid game state)
+        if community_cards[0] is not None and len(community_cards[0]) != 6:
+            #print(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:Flop of less then 3 cards. {community_cards}")
+            unrecoverable_data_detected = True
+        
         # Skip the hand if it contains unrecoverable data issues
         if unrecoverable_data_detected:
             hand_counter += 1
             continue
 
-        # Log and skip the hand if no player actions were recorded (indicating missing or invalid data)
-        if not current_hand_actions:
-            logger.error(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:GAME_ID {game_id}:ACTION_ID: {action_id}: Corrupted data, no actions ocurred in hand")
-            hand_counter += 1
-            continue
-
-        # Log and skip the hand if the flop contains fewer than 3 cards (invalid game state)
-        if community_cards[0] is not None and len(community_cards[0]) != 6:
-            logger.error(f"{str(current_file_path)[-50:]}:HAND {hand_counter+1}:Flop of less then 3 cards. {community_cards}")
-            hand_counter += 1
-            continue
-        
         # If the data checks passed we add the actions to the data and continue
         actions.append(current_hand_actions)
 
 
-        finishing_stacks = calculate_finishing_stacks(df_bets_in_hand, hand['starting_stacks'], hole_cards, community_cards, last_to_bet)
+        finishing_stacks = calculate_finishing_stacks(df_bets_in_hand, hand['starting_stacks'], hole_cards, community_cards, last_to_bet, amount_of_players)
         
         # Print-outs for debugging
-        print(f"the community cards are: \n{community_cards}")
-        print(f"the hole cards are: \n{hole_cards}")
-        print(f"the bets made during the hand are: \n{df_bets_in_hand}")
-        print(f"starting stacks are: \n{hand['starting_stacks']}")
-        print(f"finishing stacks are: \n{finishing_stacks}")
+        # print(f"the community cards are: \n{community_cards}")
+        # print(f"the hole cards are: \n{hole_cards}")
+        # print(f"the bets made during the hand are: \n{df_bets_in_hand}")
+        # print(f"starting stacks are: \n{hand['starting_stacks']}")
+        # print(f"finishing stacks are: \n{finishing_stacks}")
 
 
 
         # Table: games ✔
         # Functionality: Creates and Formats a 'games' tuple to be inserted as a row into the "games" table.
         # 
-        games.append((game_type_id, amount_of_players,community_cards[0], community_cards[1], community_cards[2], float(end_pot)))
+        games.append((game_id, game_type_id, amount_of_players,community_cards[0], community_cards[1], community_cards[2], float(end_pot)))
 
 
         # Table: players_games ✔, players_static ✔
         # Functionality: Creates and Formats a tuple for each player that was in the hand and inserts them into the
         # players_games list to be inserted into the players_games table.
-        # TODO make into function 
         for i, player_id in enumerate(hand['players']):
             player_winnings = float(finishing_stacks.iloc[i] - hand['starting_stacks'][i])
             players_static.append((player_id, player_winnings))
@@ -596,74 +511,179 @@ for file_path in root_dir.rglob("*.phhs"):
             current_hand_players_games.append(players_games_row)
         players_games.append(current_hand_players_games) 
         
-
-
         hand_counter += 1
-        game_id += 1 # end of hand loop
 
+    print(f"FINISHED PROCESSING {path_to_phhs_file}") 
+    return games, players_games, actions, players_static
+
+
+# Inserts data into database using executemany #TODO add better commenting to function
+def execute_bulk_insert(query, data, cursor = None, connection = None, commit = False, flatten = False):
+    if cursor is None:
+        try:
+            connection =  mysql.connector.connect(
+            host='localhost',
+            user="root",
+            password="5542",
+            database="pokerhands_db_testing"
+            )
+            cursor = connection.cursor()
+        except Exception as e:
+            print("Couldn't connect to the database.")
 
     try:
-        insert_games_query = """
-        INSERT INTO games (game_type_id, amount_of_players, flop, turn, river, final_pot)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        execute_bulk_insert(insert_games_query, games, cursor, commit=False, flatten=False)
+        table_name = query.split()[2]
+    except IndexError:
+        table_name = "unknown_table"  # Fallback if query format is unexpected
+        print(f"During insertion the passed query parameter was invalid")
 
-        insert_players_games_query = """
-        INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
-        VALUES (%s, %s, %s, %s, %s, %s) """
-        execute_bulk_insert(insert_players_games_query, players_games, cursor, commit=False, flatten=True)
+    if flatten:
+        data = list(chain.from_iterable(data))
 
-        insert_actions_query = """
-        INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
-        VALUES (%s, %s, %s, %s, %s, %s, %s) """
-        execute_bulk_insert(insert_actions_query, actions, cursor, commit=False, flatten=True)
-
-        insert_players_static_query = """INSERT INTO players_static (player_id, total_winnings)
-        VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE
-        total_winnings = total_winnings + VALUES(total_winnings),
-        hands_played =  hands_played + 1"""
-        execute_bulk_insert(insert_players_static_query, players_static, cursor, commit=False, flatten=False)
-
-        connection.commit()
-        logger.info("All tables were commited succesfully")
-
-    except KeyboardInterrupt:
-        connection.rollback()
-        cursor.close()
-        connection.close()
-        print("Keyboard Interrupt: Cleaning up before exit...")
-        logger.exception(f"{str(current_file_path)[-50:]}: Loading was interrupted via keyboard.")
-        end_time = time.time()
-        performance_logger.info(f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours")
+    try: 
+        cursor.executemany(query, data)
+        if commit:
+            connection.commit()
+        print(f"Insertion into the {table_name} table completed succesfully")
     except Exception as e:
-        file_parsed_succesfully = False
         connection.rollback()
-        logger.exception(f"{str(current_file_path)[-50:]}: Couldn't perform commit or execute into the database.")
+        print(f"Insertion into the {table_name} table failed. reason: {e}")
 
-    files_read_counter += 1
+
+
+
+
+
+
+df_game_types = load_game_types_from_db()
+
+def main():
+    start_time = time.time()
+
+    # Set up connection to DB
+    try:
+        connection =  mysql.connector.connect(
+        host='localhost',
+        user="root",
+        password="5542",
+        database="pokerhands_db_testing"
+    )
+    except Exception as e:
+        logger.exception("Couldn't connect to the database.")
+        print("Couldn't connect to the database.")
+        print(e)
+    cursor = connection.cursor()
+
+    logger, performance_logger = set_up_loggers()
+    manager = multiprocessing.Manager()
+    shared_game_id = manager.dict()
+    shared_game_id['game_id'] = fetch_game_id()
+    lock = manager.Lock()
+
+    logger.info(f"MESSAGE: Most recent GAME_ID:{shared_game_id['game_id']} Fetched from database.")
+    logger.info(f"MESSAGE: Amount of cpu cores detected - {os.cpu_count()}\n")
+
+    root_dir = Path(r"D:\Programming\Poker Hands Dataset Zendoo\handhq")
+    start_parsing, starting_file_path, skip_first_file = determine_starting_file_for_parsing(shared_game_id['game_id'])
+    phhs_generator = create_generator_of_phhs_batches(root_dir, start_parsing, starting_file_path, skip_first_file)
 
     
-    # Logging and performance info for the file that was finished.
-    batch_end_time = time.time()
-    performance_logger.info(f"the number {files_read_counter} batch took {batch_end_time - batch_start_time:.2f} seconds")
-    if file_parsed_succesfully:
-        logger.info(f"Finished processing file succesfully.\n")
-    else:
-        logger.info(f"File processing was unsuccesful.\n")
-
-    # if files_read_counter == 5:
-    #     break
 
 
+    files_read_counter = 0
+    batches_processed_counter = 1
+    for batch in phhs_generator:
+        logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Started Processing of batch")
+        batch_start_time = time.time()
+        file_parsed_succesfully = True
+
+        # Lists to store data for batch insertion into corresponding database tables
+        all_games = []          # Stores game metadata for the 'games' table
+        all_players_games = []  # Stores player-game relationships for the 'players_games' table
+        all_actions = []        # Stores player actions for the 'actions' table 
+        all_players_static = [] # Stores cumulative player stats for the 'players_static' table
+
+        # Multiprocesses the parsing and formatting of data
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            print(f"starting game_id shared variable is: {shared_game_id['game_id']}")
+            futures = [executor.submit(process_hands, file_path, shared_game_id, lock) for file_path in batch]
+            for future in futures:
+                games, players_games, actions, players_static = future.result()
+
+                all_games = list(itertools.chain(all_games, games))
+                all_players_games = list(itertools.chain(all_players_games, players_games))
+                all_actions = list(itertools.chain(all_actions, actions))
+                all_players_static = list(itertools.chain(all_players_static, players_static))
 
 
 
-connection.commit()
-cursor.close()
-connection.close()
+        try:
+            insert_games_query = """
+            INSERT INTO games (game_id, game_type_id, amount_of_players, flop, turn, river, final_pot)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            execute_bulk_insert(insert_games_query, all_games, cursor, connection, commit=False, flatten=False)
 
-end_time = time.time()
-performance_logger.info(f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours")
+            insert_players_games_query = """
+            INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
+            VALUES (%s, %s, %s, %s, %s, %s) """
+            execute_bulk_insert(insert_players_games_query, all_players_games, cursor, connection, commit=False, flatten=True)
 
+            insert_actions_query = """
+            INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) """
+            execute_bulk_insert(insert_actions_query, all_actions, cursor, connection, commit=False, flatten=True)
+
+            insert_players_static_query = """INSERT INTO players_static (player_id, total_winnings)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE
+            total_winnings = total_winnings + VALUES(total_winnings),
+            hands_played =  hands_played + 1"""
+            execute_bulk_insert(insert_players_static_query, all_players_static, cursor, connection, commit=False, flatten=False)
+
+            connection.commit()
+            print("All tables were commited succesfully")
+
+        except KeyboardInterrupt:
+            connection.rollback()
+            cursor.close()
+            connection.close()
+            logger.exception(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Keyboard Interrupt detected. Cleaning up before exit.")
+            end_time = time.time()
+
+        except Exception as e:
+            file_parsed_succesfully = False
+            connection.rollback()
+            logger.exception(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Insert or Commit raised an Error when executing into DB.")
+
+        
+
+        if file_parsed_succesfully:
+            for file_path in batch:
+                logger.info(f"Succesfully processed and inserted: {file_path}")
+            logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: COMPLETED processing batch of files succesfully\n")
+
+            with open('last_processed_file', "w") as file:
+                file.writelines([f"LAST PROCESSED FILE OF BATCH:{batch[-1]}\n", "SUCCESFULL"]) 
+        else:
+            logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: FAILED processing batch of files.")
+            with open('last_processed_file', "w") as file:
+                file.writelines([f"FIRST PROCESSED FILE OF BATCH:{batch[0]}\n", "UNSUCCESFULL"])
+                
+        files_read_counter += len(batch)
+        batches_processed_counter += 1
+        performance_logger.info(f"BATCH_ID {batches_processed_counter}: Took {time.time() - batch_start_time:.2f} to process. Average time per file in batch was:{(time.time() - batch_start_time) / len(batch):.2f}")
+
+
+        
+    manager.shutdown        
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+    end_time = time.time()
+    performance_logger.info(f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours or {(end_time - start_time):.2f} seconds")
+    logger.info(f"Succesfully inserted all hands into DB!")
+
+if __name__ == "__main__":
+    main()
