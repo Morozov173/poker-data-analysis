@@ -1,5 +1,7 @@
 # Ignore all log files
 *.log
 
+
 # Ignore specific files
 last_processed_file
+*DEBUGGING*

@@ -98,6 +98,17 @@ def read_hands_from_phhs(file_path):
             default_starting_stack = temp_hand['min_bet'] * 100
             temp_hand['starting_stacks'] = [default_starting_stack for starting_stack in temp_hand['players']]
 
+        # Handles where p1 isn't the small blind. happnens in heads-up games only
+        if len(temp_hand['players']) == 2 and temp_hand['actions'][2][0:2] == 'p2':
+            #print(f"DEBUGGING: Found actions where p2 and p1 need reverse. current players: {temp_hand['players']}")
+            temp_hand['players'].reverse()
+            #print(f"have been reversed to: {temp_hand['players']}")
+            #print(f"old actions: {temp_hand['actions']}")
+            temp_hand['actions'] = [s.replace('p1', "TEMP_PLACEHOLDER").replace('p2', "p1").replace("TEMP_PLACEHOLDER", 'p2') for s in temp_hand['actions']]
+            #print(f"new actions: {temp_hand['actions']}")
+        elif len(temp_hand['players']) == 2 and temp_hand['actions'][2][0:2] == 'p2': # JUST FOR DEBUGGING #TODO REMOVE LATER
+            with open('DEBUGGING1.txt', 'a') as file:
+                file.write(f"FOUND CORRECT SET UP {temp_hand['actions']}\n")
 
         list_of_hands.append(temp_hand)
         counter += 1
@@ -157,7 +168,7 @@ def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, comm
     # Hand went to showdown
     else:
         if community_cards[0] is None:
-                print(f"Hand went to showdown without community cards.")
+                #print(f"Hand went to showdown without community cards.")
                 return starting_stacks
         winners = find_winning_hands(hole_cards, community_cards)
         paid_to_winner = total_bets.sum() / sum(winners)
@@ -166,6 +177,7 @@ def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, comm
                 finishing_stacks.iloc[i] += paid_to_winner
         #print(f'Hand went to showdown! and p{i+1} won!')
 
+    #print(f"\nSTARTING STACKS: {starting_stacks}. \nFINISHING STACKS: \n{finishing_stacks}. LAST TO BET: {last_to_bet}")
     return finishing_stacks
 
 
@@ -509,12 +521,13 @@ def process_hands(path_to_phhs_file, shared_game_id, lock):
             players_static.append((player_id, player_winnings))
 
             players_games_row = (game_id, player_id, hand['starting_stacks'][i], f'p{i+1}', hole_cards[i], float(finishing_stacks.iloc[i] - hand['starting_stacks'][i]))
+            #print(f"player in position p{i+1} WON: {float(finishing_stacks.iloc[i] - hand['starting_stacks'][i])}")
             current_hand_players_games.append(players_games_row)
         players_games.append(current_hand_players_games) 
         
         hand_counter += 1
 
-    print(f"FINISHED PROCESSING {path_to_phhs_file}") 
+    #print(f"FINISHED PROCESSING {path_to_phhs_file}") 
     return games, players_games, actions, players_static
 
 

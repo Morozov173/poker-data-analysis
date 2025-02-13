@@ -32,3 +32,33 @@ LEFT JOIN game_types AS gt
 ON gt.game_type_id = g.game_type_id
 ORDER BY final_pot DESC
 LIMIT 10
+
+
+
+SELECT pg.position, COUNT(*) AS num_hands, SUM(pg.winnings) AS total_winnings
+FROM players_games AS pg
+WHERE EXISTS (
+    SELECT 1
+    FROM games AS g
+    INNER JOIN game_types AS gt ON g.game_type_id = gt.game_type_id
+    WHERE gt.seat_count = 6 AND gt.variant = 400 AND g.game_id = pg.game_id
+)
+GROUP BY pg.position
+ORDER BY total_winnings DESC;
+
+
+-- distrubiton of winnings according to position in 6Max
+SELECT pg.position, 
+       COUNT(*) AS hands_played, 
+       SUM(pg.winnings) AS total_winnings, 
+       AVG(pg.winnings) AS avg_winnings_per_hand_played
+FROM players_games AS pg
+WHERE EXISTS (
+    SELECT 1
+    FROM games AS g
+    INNER JOIN game_types AS gt ON g.game_type_id = gt.game_type_id
+    WHERE gt.seat_count = 6 AND gt.variant = 1000 AND g.game_id = pg.game_id
+)
+GROUP BY pg.position
+ORDER BY avg_winnings_per_hand_played DESC;
+

@@ -73,6 +73,10 @@ WHERE flop IS NOT NULL
 GROUP BY game_type_id, amount_of_players, flop, turn, river, final_pot
 HAVING COUNT(*) > 1;
 
+-- Check that winnings make sense
+SELECT SUM(winnings) FROM players_games
+
+
 -- Checks for invalid game_type_id's
 SELECT * FROM game_types
 WHERE game_type_id > 14
