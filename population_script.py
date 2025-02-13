@@ -2,14 +2,14 @@ import pandas as pd
 import re
 import ast
 import mysql.connector
-from mysql.connector import Error, pooling
+import psycopg2
 from treys import Card, Evaluator
 import itertools
 from pathlib import Path
 import time
 from itertools import chain
 import logging
-from collections import Counter, deque
+from collections import Counter
 import multiprocessing
 import concurrent.futures
 import os
@@ -171,11 +171,11 @@ def calculate_finishing_stacks(df_player_bets, starting_stacks, hole_cards, comm
 
 # queries the game_types table from the pokerhands database and converts it into a dataframe
 def load_game_types_from_db():
-    connection = mysql.connector.connect(
+    connection = psycopg2.connect(
         host="localhost",
-        user="root",
+        user="postgres",
         password="5542",
-        database="pokerhands_db_testing"
+        database="pokerhands_db"
     )
     cursor = connection.cursor()
     cursor.execute("SELECT * FROM game_types")
@@ -206,11 +206,11 @@ def find_game_type(df_game_types, seat_count, sb_amount, bb_amount, currency):
         df_game_types.loc[len(df_game_types)] = game_type
 
         game_type[0] = game_type[0]
-        connection = mysql.connector.connect(
+        connection = psycopg2.connect(
             host="localhost",
-            user="root",
+            user="postgres",
             password="5542",
-            database="pokerhands_db_testing"
+            database="pokerhands_db"
         )
         cursor = connection.cursor()
         cursor.execute("""INSERT INTO game_types (seat_count, sb_amount, bb_amount, currency, variant)
@@ -226,11 +226,11 @@ def find_game_type(df_game_types, seat_count, sb_amount, bb_amount, currency):
 
 # Function to fetch the highest game_id from the games table, or return 1 if the table is empty
 def fetch_game_id():
-    connection = mysql.connector.connect(
+    connection = psycopg2.connect(
         host="localhost",
-        user="root",
+        user="postgres",
         password="5542",
-        database="pokerhands_db_testing"
+        database="pokerhands_db"
     )
     cursor = connection.cursor()
     cursor.execute("SELECT MAX(game_id) FROM games")
@@ -447,6 +447,7 @@ def process_hands(path_to_phhs_file, shared_game_id, lock):
         sb_amount = hand['blinds_or_straddles'][0]
         bb_amount = hand['blinds_or_straddles'][1]
         starting_pot = sum(hand['blinds_or_straddles'])
+
         game_type_id = find_game_type(df_game_types, hand['seat_count'], sb_amount, bb_amount, hand['currency_symbol'])
 
         # print(f"\n\ncurrent hand being parsed is number: {hand_counter+1} with game_id: {game_id}")
@@ -521,11 +522,11 @@ def process_hands(path_to_phhs_file, shared_game_id, lock):
 def execute_bulk_insert(query, data, cursor = None, connection = None, commit = False, flatten = False):
     if cursor is None:
         try:
-            connection =  mysql.connector.connect(
+            connection =  psycopg2.connect(
             host='localhost',
-            user="root",
+            user="postgres",
             password="5542",
-            database="pokerhands_db_testing"
+            database="pokerhands_db"
             )
             cursor = connection.cursor()
         except Exception as e:
@@ -562,18 +563,18 @@ def main():
 
     # Set up connection to DB
     try:
-        connection =  mysql.connector.connect(
+        connection =  psycopg2.connect(
         host='localhost',
-        user="root",
+        user="postgres",
         password="5542",
-        database="pokerhands_db_testing"
+        database="pokerhands_db"
     )
     except Exception as e:
         logger.exception("Couldn't connect to the database.")
         print("Couldn't connect to the database.")
         print(e)
     cursor = connection.cursor()
-
+    cursor.execute("SET search_path TO testing, public;")
     logger, performance_logger = set_up_loggers()
     manager = multiprocessing.Manager()
     shared_game_id = manager.dict()
@@ -634,11 +635,14 @@ def main():
             VALUES (%s, %s, %s, %s, %s, %s, %s) """
             execute_bulk_insert(insert_actions_query, all_actions, cursor, connection, commit=False, flatten=True)
 
-            insert_players_static_query = """INSERT INTO players_static (player_id, total_winnings)
+            insert_players_static_query = """
+            INSERT INTO players_static (player_id, total_winnings)
             VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE
-            total_winnings = total_winnings + VALUES(total_winnings),
-            hands_played =  hands_played + 1"""
+            ON CONFLICT (player_id) 
+            DO UPDATE 
+            SET total_winnings = players_static.total_winnings + EXCLUDED.total_winnings,
+                hands_played  = players_static.hands_played + 1
+            """
             execute_bulk_insert(insert_players_static_query, all_players_static, cursor, connection, commit=False, flatten=False)
 
             connection.commit()
@@ -669,7 +673,7 @@ def main():
             logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: FAILED processing batch of files.")
             with open('last_processed_file', "w") as file:
                 file.writelines([f"FIRST PROCESSED FILE OF BATCH:{batch[0]}\n", "UNSUCCESFULL"])
-                
+
         files_read_counter += len(batch)
         batches_processed_counter += 1
         performance_logger.info(f"BATCH_ID {batches_processed_counter}: Took {time.time() - batch_start_time:.2f} to process. Average time per file in batch was:{(time.time() - batch_start_time) / len(batch):.2f}")
