@@ -64,11 +64,23 @@ def read_hands_from_phhs(file_path):
         if counter == 25:
             most_common_min_bet = min_bet_occurrences.most_common(1)[0][0]
 
-        # Handles missing seat_count 
+        # Handles an invalid amount of actions
+        if len(temp_hand['actions']) <= 2:
+            counter += 1
+            with open('DEBUGGING1.txt', 'a') as file:
+                file.write(f"FEWER THAN 2 ACTIONS IN {file_path} HAND NUMBER {counter}\n")
+            continue
+
+        # Handles missing/invalid seat_count 
         if 'seat_count' not in temp_hand:
             if max(temp_hand['seats']) > 9:
                 counter += 1
                 continue
+            if max(temp_hand['seats']) <= 6:
+                temp_hand['seat_count'] = 6
+            else:
+                temp_hand['seat_count'] = 9
+        elif temp_hand['seat_count'] < 6:
             if max(temp_hand['seats']) <= 6:
                 temp_hand['seat_count'] = 6
             else:
@@ -83,15 +95,15 @@ def read_hands_from_phhs(file_path):
         if most_common_min_bet != None and temp_hand['min_bet'] != most_common_min_bet:
             temp_hand['min_bet'] = most_common_min_bet
 
-        # Handle invalid starting_stacks
-        if temp_hand['blinds_or_straddles'][1] != temp_hand['min_bet'] or temp_hand['blinds_or_straddles'][0] == 0 or temp_hand['blinds_or_straddles'][0] == temp_hand['blinds_or_straddles'][1]:
-
-            if temp_hand['min_bet'] == 0.25:
-                temp_hand['blinds_or_straddles'][1] = temp_hand['min_bet']
-                temp_hand['blinds_or_straddles'][0] = 0.10
-            else:
-                temp_hand['blinds_or_straddles'][1] = temp_hand['min_bet']
-                temp_hand['blinds_or_straddles'][0] = int(temp_hand['min_bet'] / 2) if (temp_hand['min_bet'] / 2).is_integer() else round(temp_hand['min_bet'] / 2, 2)
+        # # Handle invalid starting_stacks
+        correct_bb  = temp_hand['min_bet']
+        if correct_bb == 0.25:
+            correct_sb = 0.10
+        else:
+            correct_sb = int(temp_hand['min_bet'] / 2) if (temp_hand['min_bet'] / 2).is_integer() else round(temp_hand['min_bet'] / 2, 2)
+        if temp_hand['blinds_or_straddles'][1] != correct_bb or temp_hand['blinds_or_straddles'][0] != correct_sb:
+            temp_hand['blinds_or_straddles'][1] = correct_bb
+            temp_hand['blinds_or_straddles'][0] = correct_sb
 
         # Handle missing starting stack values
         if 'inf' in temp_hand['starting_stacks']:
@@ -212,6 +224,8 @@ def find_game_type(df_game_types, seat_count, sb_amount, bb_amount, currency):
         game_type).all(axis=1)]
 
     if matching_game_type_row.empty:  # If the game type doesnt exist it is added to the dataframe and to the SQL Database
+        with open('DEBUGGING2.txt', 'a') as file:
+            file.write(f"A NEW GAME TYPE ID IS BEING CREATED FOR GAME TYPE: {game_type}\n")
         new_game_type_id = df_game_types['game_type_id'].max()+1
         new_game_type = game_type
         new_game_type.insert(0, new_game_type_id)
@@ -334,6 +348,7 @@ def set_up_loggers():
     logger.addHandler(info_handler)
     
     return logger, performance_logger
+
 
 # # TODO finish comment for function
 def create_generator_of_phhs_batches(root_dir, start_parsing, starting_file_path, skip_first_file,  batch_size = os.cpu_count()):
@@ -532,8 +547,9 @@ def process_hands(path_to_phhs_file, shared_game_id, lock):
 
 
 # Inserts data into database using executemany #TODO add better commenting to function
-def execute_bulk_insert(query, data, cursor = None, connection = None, commit = False, flatten = False):
-    if cursor is None:
+def execute_bulk_insert(query, data, connection=None, commit=False, flatten=False, close_connection=False):
+
+    if connection is None:
         try:
             connection =  psycopg2.connect(
             host='localhost',
@@ -541,10 +557,11 @@ def execute_bulk_insert(query, data, cursor = None, connection = None, commit = 
             password="5542",
             database="pokerhands_db"
             )
-            cursor = connection.cursor()
+            
         except Exception as e:
             print("Couldn't connect to the database.")
 
+    cursor = connection.cursor()
     try:
         table_name = query.split()[2]
     except IndexError:
@@ -562,7 +579,10 @@ def execute_bulk_insert(query, data, cursor = None, connection = None, commit = 
     except Exception as e:
         connection.rollback()
         print(f"Insertion into the {table_name} table failed. reason: {e}")
-
+    finally:
+        if close_connection:
+            cursor.close()
+            connection.close()
 
 
 
@@ -574,20 +594,6 @@ df_game_types = load_game_types_from_db()
 def main():
     start_time = time.time()
 
-    # Set up connection to DB
-    try:
-        connection =  psycopg2.connect(
-        host='localhost',
-        user="postgres",
-        password="5542",
-        database="pokerhands_db"
-    )
-    except Exception as e:
-        logger.exception("Couldn't connect to the database.")
-        print("Couldn't connect to the database.")
-        print(e)
-    cursor = connection.cursor()
-    cursor.execute("SET search_path TO testing, public;")
     logger, performance_logger = set_up_loggers()
     manager = multiprocessing.Manager()
     shared_game_id = manager.dict()
@@ -600,8 +606,6 @@ def main():
     root_dir = Path(r"D:\Programming\Poker Hands Dataset Zendoo\handhq")
     start_parsing, starting_file_path, skip_first_file = determine_starting_file_for_parsing(shared_game_id['game_id'])
     phhs_generator = create_generator_of_phhs_batches(root_dir, start_parsing, starting_file_path, skip_first_file)
-
-    
 
 
     files_read_counter = 0
@@ -631,22 +635,36 @@ def main():
 
 
 
+            # Set up connection to DB
+        try:
+            connection =  psycopg2.connect(
+            host='localhost',
+            user="postgres",
+            password="5542",
+            database="pokerhands_db"
+        )
+        except Exception as e:
+            logger.exception("Couldn't connect to the database.")
+            print("Couldn't connect to the database.")
+            print(e)
+        cursor = connection.cursor()
+
         try:
             insert_games_query = """
             INSERT INTO games (game_id, game_type_id, amount_of_players, flop, turn, river, final_pot)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            execute_bulk_insert(insert_games_query, all_games, cursor, connection, commit=False, flatten=False)
+            execute_bulk_insert(insert_games_query, all_games,connection, commit=False, flatten=False, close_connection=False)
 
             insert_players_games_query = """
             INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
             VALUES (%s, %s, %s, %s, %s, %s) """
-            execute_bulk_insert(insert_players_games_query, all_players_games, cursor, connection, commit=False, flatten=True)
+            execute_bulk_insert(insert_players_games_query, all_players_games, connection, commit=False, flatten=True, close_connection=False)
 
             insert_actions_query = """
             INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
             VALUES (%s, %s, %s, %s, %s, %s, %s) """
-            execute_bulk_insert(insert_actions_query, all_actions, cursor, connection, commit=False, flatten=True)
+            execute_bulk_insert(insert_actions_query, all_actions, connection, commit=False, flatten=True, close_connection=False)
 
             insert_players_static_query = """
             INSERT INTO players_static (player_id, total_winnings)
@@ -656,7 +674,8 @@ def main():
             SET total_winnings = players_static.total_winnings + EXCLUDED.total_winnings,
                 hands_played  = players_static.hands_played + 1
             """
-            execute_bulk_insert(insert_players_static_query, all_players_static, cursor, connection, commit=False, flatten=False)
+            execute_bulk_insert(insert_players_static_query, all_players_static, connection, commit=False, flatten=False, close_connection=False)
+
 
             connection.commit()
             print("All tables were commited succesfully")
