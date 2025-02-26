@@ -12,6 +12,7 @@ import logging
 from collections import Counter
 import multiprocessing
 import concurrent.futures
+from dotenv import load_dotenv
 import os
 from typing import Any, Generator
 
@@ -189,10 +190,10 @@ def calculate_finishing_stacks(df_player_bets: pd.DataFrame, starting_stacks: li
 # Loads the game_types table from the database into a DataFrame.
 def load_game_types_from_db() -> pd.DataFrame:
     connection = psycopg2.connect(
-        host="localhost",
-        user="postgres",
-        password="5542",
-        database="pokerhands_db"
+        host=os.getenv("HOST"),
+        user=os.getenv("USER"),
+        password=os.getenv("PASSWORD"),
+        database=os.getenv("DB_NAME")
     )
     cursor = connection.cursor()
     cursor.execute("SELECT * FROM game_types")
@@ -227,10 +228,10 @@ def find_game_type(df_game_types: pd.DataFrame, seat_count: int, sb_amount: floa
 
         game_type[0] = game_type[0]
         connection = psycopg2.connect(
-            host="localhost",
-            user="postgres",
-            password="5542",
-            database="pokerhands_db"
+            host=os.getenv("HOST"),
+            user=os.getenv("USER"),
+            password=os.getenv("PASSWORD"),
+            database=os.getenv("DB_NAME")
         )
         cursor = connection.cursor()
         cursor.execute("""INSERT INTO game_types (seat_count, sb_amount, bb_amount, currency, variant)
@@ -247,10 +248,10 @@ def find_game_type(df_game_types: pd.DataFrame, seat_count: int, sb_amount: floa
 # Retrieves the maximum game_id from the DB and returns the next available id.
 def fetch_game_id() -> int:
     connection = psycopg2.connect(
-        host="localhost",
-        user="postgres",
-        password="5542",
-        database="pokerhands_db"
+        host=os.getenv("HOST"),
+        user=os.getenv("USER"),
+        password=os.getenv("PASSWORD"),
+        database=os.getenv("DB_NAME")
     )
     cursor = connection.cursor()
     cursor.execute("SELECT MAX(game_id) FROM games")
@@ -521,10 +522,10 @@ def execute_bulk_insert(query, data, connection=None, commit=False, flatten=Fals
     if connection is None:
         try:
             connection = psycopg2.connect(
-                host='localhost',
-                user="postgres",
-                password="5542",
-                database="pokerhands_db"
+                host=os.getenv("HOST"),
+                user=os.getenv("USER"),
+                password=os.getenv("PASSWORD"),
+                database=os.getenv("DB_NAME")
             )
 
         except Exception as e:
@@ -555,6 +556,7 @@ def execute_bulk_insert(query, data, connection=None, commit=False, flatten=Fals
 
 
 df_game_types = load_game_types_from_db()
+load_dotenv()
 
 
 def main():
@@ -609,10 +611,10 @@ def main():
         # Set up connection to DB.
         try:
             connection = psycopg2.connect(
-                host='localhost',
-                user="postgres",
-                password="5542",
-                database="pokerhands_db"
+                host=os.getenv("HOST"),
+                user=os.getenv("USER"),
+                password=os.getenv("PASSWORD"),
+                database=os.getenv("DB_NAME")
             )
         except Exception as e:
             logger.exception("Couldn't connect to the database.")
