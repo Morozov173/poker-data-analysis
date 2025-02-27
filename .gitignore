@@ -4,6 +4,7 @@
 # Ignore specific files
 last_processed_file
 *DEBUGGING*
+temp.py
 
 # ignore .env
 .env

@@ -24,7 +24,7 @@ CREATE TABLE game_types (
 -- CREATE TABLE: games
 CREATE TABLE games (
     game_id SERIAL PRIMARY KEY,
-    game_type_id INT,
+    game_type_id INT NOT NULL,
     FOREIGN KEY (game_type_id) REFERENCES game_types(game_type_id),
     amount_of_players SMALLINT NOT NULL,
     flop CHAR(6),
@@ -40,11 +40,11 @@ CREATE TABLE players_games (
     starting_stack DECIMAL(7,2) NOT NULL,
     position CHAR(2) NOT NULL,
     hand CHAR(4) NOT NULL DEFAULT '????',
-    winnings DECIMAL(7,2),
+    winnings DECIMAL(7,2) NOT NULL DEFAULT 0,
     PRIMARY KEY (game_id, player_id)
     -- Optionally add a FK:
     -- FOREIGN KEY (game_id) REFERENCES games(game_id)
-);
+);        
 
 -- CREATE TABLE: actions
 CREATE TABLE actions (
@@ -66,7 +66,7 @@ CREATE TABLE players_static (
     hands_played INT DEFAULT 1 NOT NULL
 );
 
--- INSERT Data into game_types
+-- SEED game_types
 INSERT INTO game_types (seat_count, sb_amount, bb_amount, currency, variant)
 VALUES (6, 0.10, 0.25, '$', 25);
 INSERT INTO game_types (seat_count, sb_amount, bb_amount, currency, variant)

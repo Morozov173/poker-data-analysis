@@ -1,3 +1,5 @@
+from typing import Any, Generator
+import os
 import pandas as pd
 import re
 import ast
@@ -11,10 +13,9 @@ from itertools import chain
 import logging
 from collections import Counter
 import multiprocessing
+from multiprocessing import managers
 import concurrent.futures
 from dotenv import load_dotenv
-import os
-from typing import Any, Generator
 
 
 # Returns True if the string is a valid Python literal; otherwise, False.
@@ -444,7 +445,7 @@ def process_actions_in_hand(actions_of_hand: list[str], amount_of_players: int, 
 
 
 # Parses a PHHS file and returns data as four lists. Uses a Manager dict proxy and lock for safe multi-process sharing.
-def process_hands(path_to_phhs_file: str, shared_game_id: multiprocessing.managers.DictProxy, lock: multiprocessing.managers.AcquirerProxy) -> tuple[list[tuple], list[list], list[list], list[tuple]]:
+def process_hands(path_to_phhs_file: str, shared_game_id: managers.DictProxy, lock: managers.AcquirerProxy) -> tuple[list[tuple], list[list], list[list], list[tuple]]:
     hands = read_hands_from_phhs(path_to_phhs_file)
 
     actions = []        # Stores player actions for the 'actions' table
@@ -555,8 +556,8 @@ def execute_bulk_insert(query, data, connection=None, commit=False, flatten=Fals
             connection.close()
 
 
-df_game_types = load_game_types_from_db()
 load_dotenv()
+df_game_types = load_game_types_from_db()
 
 
 def main():
