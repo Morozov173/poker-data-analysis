@@ -569,8 +569,7 @@ def main():
     shared_game_id['game_id'] = fetch_game_id()
     lock = manager.Lock()
 
-    logger.info(
-        f"MESSAGE: Most recent GAME_ID:{shared_game_id['game_id']} Fetched from database.")
+    logger.info(f"MESSAGE: Most recent GAME_ID:{shared_game_id['game_id']} Fetched from database.")
     logger.info(f"MESSAGE: Amount of cpu cores detected - {os.cpu_count()}\n")
 
     root_dir = Path(r"D:\Programming\Poker Hands Dataset Zendoo\handhq")
