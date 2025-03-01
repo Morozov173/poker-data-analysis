@@ -247,9 +247,8 @@ with tabs[0]:
 # Positional Analysis
 with tabs[1]:
     st.header("Positional Analysis")
-    st.write("")  # Blank line as a spacer
 
-    # Action type rate heatmap
+    # Action Frequencies Stacked bar chart
     with st.container(border=True):
         st.subheader("Action Frequencies by Table Position")
         st.caption("A heatmap showing how often each action (fold, check, call, raise) occurs in different positions at the table.")
@@ -287,46 +286,55 @@ with tabs[1]:
             }
 
         df_filtered = df_action_type_rates[(df_action_type_rates['variant'] == variant) & (df_action_type_rates['seat_count'] == seat_count)].copy()
-        df_filtered['position'] = df_filtered['position'].replace(custom_labels)
-        df_filtered['position'] = pd.Categorical(df_filtered['position'], categories=position_order, ordered=True)
-        heatmap_data = df_filtered.set_index('position')[['fold_rate', 'check_rate', 'call_rate', 'raise_rate']]
-        heatmap_data = heatmap_data.T
-        heatmap_data = heatmap_data.reindex(columns=position_order)
-        heatmap_data.rename(
-            index={
-                "fold_rate": "Fold Rate %",
-                "check_rate": "Check Rate %",
-                "call_rate": "Call Rate %",
-                "raise_rate": "Raise Rate %"},
-            inplace=True)
 
-        custom_color_scale = [
-            (0.0,  "#f8e2e5"),  # Very light pinkish
-            (0.5,  "#D1495B"),  # The main color
-            (1.0,  "#7a1322")   # A darker red shade
-        ]
-        fig = px.imshow(
-            heatmap_data,
-            text_auto=True,
-            color_continuous_scale=custom_color_scale,
-            labels=dict(x="Position", y="Action Type", color="Rate (%)")
+        df_long = df_filtered.melt(
+            id_vars=["position"],  # These columns stay the same in every row (the identifier, like position)
+            value_vars=["fold_rate", "check_rate", "call_rate", "raise_rate"],  # These columns will be "melted" into one
+            var_name="action_type",  # New column to hold the names (fold_rate, check_rate, etc.)
+            value_name="rate"  # New column to hold the corresponding values
+        )
+        df_long['position'] = df_long['position'].replace(custom_labels)
+        df_long['position'] = pd.Categorical(df_long['position'], categories=position_order, ordered=True)
+        df_long.sort_values("position", inplace=True)
+        df_long["action_type"] = df_long["action_type"].replace({
+            "fold_rate": "Fold Rate",
+            "check_rate": "Check Rate",
+            "call_rate": "Call Rate",
+            "raise_rate": "Raise Rate"},
+        )
+
+        custom_colors = ["#D1495b", "#577399", "#74A57F", "#9ECE9A"]  # Example colors
+        fig = px.bar(
+            df_long,
+            x="position",
+            y="rate",
+            color="action_type",
+            text="rate",
+            labels={"position": "Position", "rate": "Rate (%)", "action_type": "Action Type"},
+            barmode="stack",
+
+            color_discrete_sequence=custom_colors
+        )
+        fig.update_traces(
+            texttemplate="%{y:.0f}%"
         )
         fig.update_layout(
-            xaxis_title="Action Type",
-            yaxis_title="Position",
             font=dict(size=18),
             xaxis=dict(tickfont_size=18, title_font_size=18),
             yaxis=dict(tickfont_size=18, title_font_size=18),
-            margin=dict(l=100, r=100, t=50, b=100),
-            height=650,
-            width=1000
-        )
+            margin=dict(l=100, r=100, t=0, b=80),
+            height=700,
+            barnorm="percent",
+            legend_title_text="",
+            legend=dict(font=dict(size=22))
 
+        )
         l, m, r = st.columns([0.5, 1.5, 0.5])
         with m:
             st.plotly_chart(fig, use_container_width=True)
+            st.caption("""Earlier positions fold more often but also raise decisively, reflecting a cautious yet aggressive approach when acting first. Meanwhile, the big blind shows the highest check rate, which makes sense given the option to see the flop for free if no one raises.
+                          Overall, these patterns illustrate how position strongly influences preflop decisions.""")
 
-        st.caption("""Earlier positions fold more often but also raise decisively, reflecting a cautious yet aggressive approach when acting first. Meanwhile, the big blind shows the highest check rate, which makes sense given the option to see the flop for free if no one raises. Overall, these patterns illustrate how position strongly influences preflop decisions.""")
         with st.expander("SQL Query Used"):
             query = """
                 WITH actions_with_variant AS (
