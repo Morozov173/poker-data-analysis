@@ -1,9 +1,58 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from plotly.graph_objects import Figure
 from sqlalchemy import create_engine
 st.set_page_config(page_title="Poker Analysis", layout='wide', initial_sidebar_state="collapsed", )  # page_icon="🃏"
+
+
+def asign_poker_card_group(hand: str) -> str:
+    rank = {'A': 14, 'K': 13, 'Q': 12, 'J': 11, 'T': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2}
+    if hand[0] == hand[2] or rank[hand[0]] > rank[hand[2]]:
+        hand_group = hand[0]+hand[2]
+    else:
+        hand_group = hand[2]+hand[0]
+
+    if hand[0] != hand[2] and hand[1] == hand[3]:
+        hand_group += 's'
+    elif hand[0] != hand[2] and hand[1] != hand[3]:
+        hand_group += 'o'
+
+    return hand_group
+
+
+def create_matrices(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cards = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
+    labels = []
+    winnings = []
+    for i in range(13):
+        row = []
+        value_row = []
+        offsuit = False
+
+        for j in range(13):  # every new row
+            if cards[i] == cards[j]:
+                offsuit = True
+                card_type = cards[i]+cards[j]
+                row.append(card_type)
+                value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
+                continue
+
+            if offsuit:
+                card_type = cards[i]+cards[j]+'o'
+            else:
+                card_type = cards[j]+cards[i]+'s'
+
+            row.append(card_type)
+            value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
+
+        labels.append(row)
+        winnings.append(value_row)
+
+    df_labels = pd.DataFrame(labels, columns=cards, index=cards)
+    df_winnings = pd.DataFrame(winnings, columns=cards, index=cards)
+    return df_labels, df_winnings
 
 
 def style_plotly_figure(fig: Figure) -> Figure:
@@ -14,7 +63,7 @@ def style_plotly_figure(fig: Figure) -> Figure:
     fig.update_layout(
         font=dict(size=18),
         xaxis=dict(
-            tickfont_size=12,
+            tickfont_size=18,
             title_font_size=18
         ),
         yaxis=dict(
@@ -22,7 +71,7 @@ def style_plotly_figure(fig: Figure) -> Figure:
             title_font_size=18
         ),
         margin=dict(l=100, r=100, t=0, b=80),
-        height=650,
+        height=700,
     )
     return fig
 
@@ -33,6 +82,9 @@ df_avgwinnings = pd.read_csv("dashboard_data/avg_winnings.csv")
 df_ten_most_profitable = pd.read_csv("dashboard_data/ten_most_profitable.csv")
 df_ten_least_profitable = pd.read_csv("dashboard_data/ten_least_profitable.csv")
 df_action_type_rates = pd.read_csv("dashboard_data/action_type_rates.csv")
+df_vpip_pfr_percentages = pd.read_csv("dashboard_data/vpip_pfr_percentages.csv")
+df_winnings_by_hand = pd.read_csv("dashboard_data/winnings_by_hand.csv")
+
 # Sidebar
 st.sidebar.markdown("""
 ### **Positions**
@@ -82,10 +134,62 @@ tabs = st.tabs(["**General Analysis**", "**Positional Analysis**", "**Trends Acr
 with tabs[0]:
     st.header("General Analysis")
 
+    # Winnings by Hand Heatmap
+    with st.container(border=True):
+        st.subheader(f"Profitibality of Hand types")
+        st.caption("Top 10 final pot values for stake level & table type")
+
+        # Slider & Dropdown for data selection
+        columns = st.columns([0.1, 1, 0.1, 1, 0.1])
+        with columns[1]:
+            variant = st.select_slider('Stake Level', [25, 50, 100, 200, 400, 600, 1000, 'ALL'], value='ALL', key="wnngs_by_hand_sld")
+        with columns[3]:
+            seat_count = st.selectbox("Table Type (Seat Count)", [6, 9], key="wnngs_by_hand_slctbox")
+
+        if variant == 'ALL':
+            df_winnings_by_hand['hand_type'] = df_winnings_by_hand['hand'].apply(asign_poker_card_group)
+            df_winnings_by_hand = df_winnings_by_hand.groupby("hand_type")["winnings"].sum().reset_index()
+            df_winnings_by_hand = df_winnings_by_hand.sort_values(by="winnings", ascending=False)
+        else:
+            df_winnings_by_hand = df_winnings_by_hand[(df_winnings_by_hand['variant'] == variant) & (df_winnings_by_hand['seat_count'] == seat_count)]
+            df_winnings_by_hand['hand_type'] = df_winnings_by_hand['hand'].apply(asign_poker_card_group)
+            df_winnings_by_hand = df_winnings_by_hand.groupby("hand_type")["winnings"].sum().reset_index()
+            df_winnings_by_hand = df_winnings_by_hand.sort_values(by="winnings", ascending=False)
+
+        label_matrix, winnings_matrix = create_matrices(df_winnings_by_hand)
+        custom_colorscale = [
+            (0.00, "#F3C7C9"),
+            (0.25, "#E8A2A7"),
+            (0.50, "#D1495B"),
+            (0.75, "#B13749"),
+            (1.00, "#8F2F44")
+        ]
+        zmax_value = np.percentile(winnings_matrix.values, 95)  # heatmap will account 93 percent of data so outliers wont skew heatmap sensetivity
+        fig = px.imshow(
+            winnings_matrix.values,
+            x=winnings_matrix.columns,
+            y=winnings_matrix.index,
+            zmax=zmax_value,
+            labels=dict(color="Winnings"),
+            color_continuous_scale=custom_colorscale,
+            text_auto=False
+        )
+        fig.update_layout(
+            height=1200
+        )
+        fig.update_traces(
+            text=label_matrix,
+            texttemplate="%{text}",
+            textfont_size=18,
+            # hovertemplate =
+        )
+        fig.update_xaxes(type='category', showticklabels=False, showline=False, zeroline=False)
+        fig.update_yaxes(type='category', showticklabels=False, showline=False, zeroline=False)
+        st.plotly_chart(fig, use_container_width=True)
+
     # 10 Biggest Pots Played
     with st.container(border=True):
-        header_placeholder = st.empty()
-        header_placeholder.subheader(f"Biggest Pots Played")
+        st.subheader(f"Biggest Pots Played")
         st.caption("Top 10 final pot values for stake level & table type")
 
         # Slider & Dropdown for data selection
@@ -128,7 +232,8 @@ with tabs[0]:
                     SUM(pg.winnings) AS total_winnings,
                     AVG(pg.winnings) AS avg_winnings_per_hand
                 FROM players_games AS pg
-                INNER JOIN game_types_info AS g ON pg.game_id = g.game_id
+                INNER JOIN game_types_info AS g
+                ON pg.game_id = g.game_id
                 GROUP BY pg.position, g.seat_count, g.variant;
             """
             st.code(query, "sql")
@@ -348,8 +453,9 @@ with tabs[1]:
                     FROM actions AS a
                     JOIN game_types_info AS gti
                     ON a.game_id = gti.game_id
-                ), action_type_counts AS(
-                    SELECT 
+                ),
+                action_type_counts AS(
+                    SELECT
                         a.position,
                         a.variant,
                         a.seat_count,
@@ -361,7 +467,7 @@ with tabs[1]:
                         FROM actions_with_variant AS a
                     GROUP BY a.position, a.variant, a.seat_count
                 )
-                SELECT 
+                SELECT
                     a.position,
                     a.variant,
                     a.seat_count,
@@ -373,7 +479,7 @@ with tabs[1]:
                 ORDER BY a.variant, a.seat_count, a.position; """
             st.code(query, "sql")
 
-        # Average Winnings by Position
+    # Average Winnings by Position
     with st.container(border=True):
         st.subheader("Average Winnings by Position")
         st.caption("The Average $ Won per Hand Played for every Position across stake level & table type")
@@ -435,17 +541,142 @@ with tabs[1]:
         )
         fig.update_xaxes(tickfont_size=16)
         st.plotly_chart(fig)
-        st.caption(f"Wow. So much meaningful and insightful commnentary in this line of text. Simply Amazing")
+        st.caption("""
+            From left to right, the early positions (UTG, MP, CO) usually see moderate gains, while the Button (BTN) often stands out with the highest average winnings, thanks to acting last and facing fewer opponents. In contrast, both blinds (SB and BB) frequently show net losses, reflecting their forced bets and weaker positional advantage. Overall, these trends reinforce how critical position is in poker—later seats typically have the edge in decision-making and pot control, while the blinds bear the cost of mandatory bets and more complex postflop scenarios.
+        """)
+
         with st.expander("SQL Query Used"):
             query = """
-                SELECT 
-                    pg.position, 
-                    g.seat_count, 
+                SELECT
+                    pg.position,
+                    g.seat_count,
                     g.variant,
-                    COUNT(*) AS hands_played, 
-                    SUM(pg.winnings) AS total_winnings, 
+                    COUNT(*) AS hands_played,
+                    SUM(pg.winnings) AS total_winnings,
                     AVG(pg.winnings) AS avg_winnings_per_hand
                 FROM players_games AS pg
-                INNER JOIN game_types_info AS g ON pg.game_id = g.game_id
+                JOIN game_types_info AS g
+                ON pg.game_id = g.game_id
                 GROUP BY pg.position, g.seat_count, g.variant; """
+            st.code(query, "sql")
+
+    # VPIP% & PFR% by Position
+    with st.container(border=True):
+        st.subheader("VPIP & PFR Percentages by Table Position")
+        st.caption("Bar chart that shocases how often players voluntarily put money into the pot (VPIP) versus how frequently they raise preflop (PFR), broken down by each seat at the table")
+
+        # Slider & Dropdown for data selection
+        columns = st.columns([0.1, 1, 0.1, 1, 0.1])
+        with columns[1]:
+            variant = st.select_slider('Stake Level', [25, 50, 100, 200, 400, 600, 1000], value=1000, key="vpip_pfr_sld")
+        with columns[3]:
+            seat_count = st.selectbox("Table Type (Seat Count)", [6, 9], key="vpip_pfr_slctbox")
+        # Labeling of Positions
+        if seat_count == 6:
+            position_order = ["UTG", "MP", "CO", "BTN", "SB", "BB"]
+            custom_labels = {
+                "p1": "SB",
+                "p2": "BB",
+                "p3": "UTG",
+                "p4": "MP",
+                "p5": "CO",
+                "p6": "BTN"
+            }
+        else:
+            position_order = ["UTG", "UTG+1", "UTG+2", "UTG+3", "MP", "CO", "BTN", "SB", "BB"]
+            custom_labels = {
+                "p1": "SB",
+                "p2": "BB",
+                "p3": "UTG",
+                "p4": "UTG+1",
+                "p5": "UTG+2",
+                "p6": "UTG+3",
+                "p7": "MP",
+                "p8": "CO",
+                "p9": "BTN"
+            }
+
+        df_filtered = df_vpip_pfr_percentages[(df_vpip_pfr_percentages['seat_count'] == seat_count) & (df_vpip_pfr_percentages['variant'] == variant)].copy()
+        df_filtered['position'] = df_filtered['position'].replace(custom_labels)
+        df_filtered['position'] = pd.Categorical(df_filtered['position'], categories=position_order, ordered=True)
+        df_filtered = df_filtered.sort_values(by="position")
+        df_filtered.rename(columns={"vpip_percentage": "VPIP %", "pfr_percentage": "PFR %"}, inplace=True)
+        fig = px.bar(
+            df_filtered,
+            x="position",
+            y=["VPIP %", "PFR %"],
+            barmode="group",
+            labels={"position": "Position", "value": "Percentage (%)"},
+            height=750,
+            color_discrete_sequence=["#D1495B", "#577399"]
+
+            # color=["#D1495b", "#577399"]*3
+        )
+        fig.update_layout(
+            font=dict(size=14),
+            xaxis=dict(tickfont_size=18, title_font_size=18),
+            yaxis=dict(tickfont_size=18, title_font_size=18),
+            legend_title_text="",
+            legend=dict(
+                font=dict(size=22),
+                orientation="h",
+                bgcolor="#171C26",
+                bordercolor="#D3FFF3",
+                borderwidth=0.2,
+                x=0.85,
+                y=0.9,
+                xanchor="left",
+                yanchor="top"
+            )
+        )
+        fig.update_traces(texttemplate="%{y:.2f}%", textposition="outside", textfont_size=20,)
+        st.plotly_chart(fig)
+        st.caption("""Observing these numbers, you’ll notice that players in late positions (like the cutoff and button) often raise more before the flop.
+                    They’re in the best spots to steal blinds and face fewer opponents after them. Early positions, on the other hand, might have moderate or even higher VPIP (they see more flops), but they’re less likely to open-raise because they have to worry about the rest of the table acting behind them.
+                    Interestingly, the small blind sometimes shows a high PFR too, possibly from the pressure to defend or grab the pot immediately. Meanwhile, the big blind tends to be more selective, focusing on hands that can stand up to raises. """)
+        with st.expander("SQL Query Used"):
+            query = """
+                WITH sorted_actions AS (
+                    SELECT DISTINCT ON (a.game_id, a.position)
+                        a.position,
+                        a.action_type,
+                        gti.variant,
+                        gti.seat_count
+                    FROM actions AS a
+                    JOIN game_types_info AS gti
+                    ON a.game_id = gti.game_id
+                    WHERE a.round = 0 AND a.amount > 0
+                ),
+                vpip_pfr_counts AS (
+                    SELECT
+                        a.variant,
+                        a.seat_count,
+                        a.position,
+                        COUNT(*) AS vpip_actions_performed,
+                        SUM(CASE WHEN action_type = 'cbr' THEN 1 ELSE 0 END) AS pfr_actions_performed
+                    FROM sorted_actions AS a
+                    GROUP BY a.position,a.variant,a.seat_count
+                    ORDER BY a.variant, a.seat_count, a.position
+                ),
+                total_hands_dealt AS(
+                    SELECT 
+                        gti.variant,
+                        gti.seat_count,
+                        pg.position,
+                        COUNT(*) AS total_hands 
+                    FROM players_games AS pg
+                    JOIN game_types_info AS gti
+                    ON pg.game_id = gti.game_id
+                    GROUP BY pg.position, gti.variant, gti.seat_count
+                )
+                SELECT 
+                    a.*,
+                    thd.total_hands,
+                    ROUND(a.vpip_actions_performed * 100.0 / thd.total_hands, 2) AS vpip_percentage,
+                    ROUND(a.pfr_actions_performed * 100.0 / thd.total_hands, 2) AS pfr_percentage
+                FROM vpip_pfr_counts AS a
+                JOIN total_hands_dealt AS thd
+                    ON thd.position = a.position 
+                    AND thd.variant = a.variant 
+                    AND a.seat_count = thd.seat_count"""
             st.code(query, "sql")
