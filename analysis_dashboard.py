@@ -7,54 +7,7 @@ from sqlalchemy import create_engine
 st.set_page_config(page_title="Poker Analysis", layout='wide', initial_sidebar_state="collapsed", )  # page_icon="🃏"
 
 
-def asign_poker_card_group(hand: str) -> str:
-    rank = {'A': 14, 'K': 13, 'Q': 12, 'J': 11, 'T': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2}
-    if hand[0] == hand[2] or rank[hand[0]] > rank[hand[2]]:
-        hand_group = hand[0]+hand[2]
-    else:
-        hand_group = hand[2]+hand[0]
-
-    if hand[0] != hand[2] and hand[1] == hand[3]:
-        hand_group += 's'
-    elif hand[0] != hand[2] and hand[1] != hand[3]:
-        hand_group += 'o'
-
-    return hand_group
-
-
-def create_matrices(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cards = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
-    labels = []
-    winnings = []
-    for i in range(13):
-        row = []
-        value_row = []
-        offsuit = False
-
-        for j in range(13):  # every new row
-            if cards[i] == cards[j]:
-                offsuit = True
-                card_type = cards[i]+cards[j]
-                row.append(card_type)
-                value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
-                continue
-
-            if offsuit:
-                card_type = cards[i]+cards[j]+'o'
-            else:
-                card_type = cards[j]+cards[i]+'s'
-
-            row.append(card_type)
-            value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
-
-        labels.append(row)
-        winnings.append(value_row)
-
-    df_labels = pd.DataFrame(labels, columns=cards, index=cards)
-    df_winnings = pd.DataFrame(winnings, columns=cards, index=cards)
-    return df_labels, df_winnings
-
-
+# Applies styling to a Plotly figure, adjusting text size, margins, and colors. To ensure consistent formatting across multiple plots
 def style_plotly_figure(fig: Figure) -> Figure:
     fig.update_traces(
         textfont_size=16,
@@ -76,7 +29,64 @@ def style_plotly_figure(fig: Figure) -> Figure:
     return fig
 
 
-# Loading all data TODO Add caching
+# Converts a 4-character string representing a poker hand into a standardized hand group. Example: 'Ac9j' -> 'A9o'
+def asign_poker_card_group(hand: str) -> str:
+    rank = {'A': 14, 'K': 13, 'Q': 12, 'J': 11, 'T': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2}
+
+    # Determine the correct ordering of the hand based on rank (higher card first)
+    if hand[0] == hand[2] or rank[hand[0]] > rank[hand[2]]:
+        hand_group = hand[0]+hand[2]
+    else:
+        hand_group = hand[2]+hand[0]
+
+    # Append 's' for suited hands and 'o' for offsuit hands
+    if hand[0] != hand[2] and hand[1] == hand[3]:
+        hand_group += 's'
+    elif hand[0] != hand[2] and hand[1] != hand[3]:
+        hand_group += 'o'
+
+    return hand_group
+
+
+# Generates a 13x13 poker hand matrix containing hand labels and corresponding winnings.
+# The output consists of two DataFrames:
+#   - df_labels: A matrix where each cell contains the hand group (e.g., 'AKo', 'QQ').
+#   - df_winnings: A matrix where each cell contains the total winnings for that hand.
+def create_matrices(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cards = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
+    labels = []
+    winnings = []
+    for i in range(13):
+        row = []
+        value_row = []
+        offsuit = False  # Flag to switch from suited to offsuit notation
+
+        for j in range(13):  # every new row
+            if cards[i] == cards[j]:  # Pocket pairs
+                offsuit = True
+                card_type = cards[i]+cards[j]
+                row.append(card_type)
+                value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
+                continue
+
+            # Assign suited (above diagonal) or offsuit (below diagonal)
+            if offsuit:
+                card_type = cards[i]+cards[j]+'o'
+            else:
+                card_type = cards[j]+cards[i]+'s'
+
+            row.append(card_type)
+            value_row.append(float(df.loc[df['hand_type'] == card_type, 'winnings'].iloc[0]))
+
+        labels.append(row)
+        winnings.append(value_row)
+
+    df_labels = pd.DataFrame(labels, columns=cards, index=cards)
+    df_winnings = pd.DataFrame(winnings, columns=cards, index=cards)
+    return df_labels, df_winnings
+
+
+# Loading data for visualization TODO: Caching
 df_ten_biggest_pots = pd.read_csv("dashboard_data/ten_biggest_pots.csv")
 df_avgwinnings = pd.read_csv("dashboard_data/avg_winnings.csv")
 df_ten_most_profitable = pd.read_csv("dashboard_data/ten_most_profitable.csv")
@@ -85,7 +95,10 @@ df_action_type_rates = pd.read_csv("dashboard_data/action_type_rates.csv")
 df_vpip_pfr_percentages = pd.read_csv("dashboard_data/vpip_pfr_percentages.csv")
 df_winnings_by_hand = pd.read_csv("dashboard_data/winnings_by_hand.csv")
 
-# Sidebar
+
+# Main App logic:
+
+# Set-Up of app sidebar
 st.sidebar.markdown("""
 ### **Positions**
 
@@ -113,8 +126,7 @@ st.sidebar.markdown("""
 | **WSD (Went to Showdown %)** | How often a player reaches showdown when they see the river. |
 """)
 
-
-# Main Title
+# Displaying main app title * some info
 st.title("Poker Analysis Project")
 st.markdown(
     """
@@ -125,27 +137,27 @@ st.markdown(
     """
 )
 
-
-# Analysis by categories
+# Creating Tabs by analysis categories
 tabs = st.tabs(["**General Analysis**", "**Positional Analysis**", "**Trends Across Stake Levels**"])
 
 
-# General Analysis
+# TAB 1 - General Analysis
 with tabs[0]:
     st.header("General Analysis")
 
-    # Winnings by Hand Heatmap
+    # Heatmap - Winnings by cards dealt
     with st.container(border=True):
-        st.subheader(f"Profitibality of Hand types")
-        st.caption("Top 10 final pot values for stake level & table type")
+        st.subheader(f"Profitibality by Starting Cards")
+        st.caption("Heatmap: Darker Colors = Higher Winnings")
 
-        # Slider & Dropdown for data selection
+        # Slider & Dropdown for stake & table selection
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
         with columns[1]:
             variant = st.select_slider('Stake Level', [25, 50, 100, 200, 400, 600, 1000, 'ALL'], value='ALL', key="wnngs_by_hand_sld")
         with columns[3]:
             seat_count = st.selectbox("Table Type (Seat Count)", [6, 9], key="wnngs_by_hand_slctbox")
 
+        # Sorting and processing data for display
         if variant == 'ALL':
             df_winnings_by_hand['hand_type'] = df_winnings_by_hand['hand'].apply(asign_poker_card_group)
             df_winnings_by_hand = df_winnings_by_hand.groupby("hand_type")["winnings"].sum().reset_index()
@@ -155,8 +167,9 @@ with tabs[0]:
             df_winnings_by_hand['hand_type'] = df_winnings_by_hand['hand'].apply(asign_poker_card_group)
             df_winnings_by_hand = df_winnings_by_hand.groupby("hand_type")["winnings"].sum().reset_index()
             df_winnings_by_hand = df_winnings_by_hand.sort_values(by="winnings", ascending=False)
-
         label_matrix, winnings_matrix = create_matrices(df_winnings_by_hand)
+
+        # Creating heatmap
         custom_colorscale = [
             (0.00, "#F3C7C9"),
             (0.25, "#E8A2A7"),
@@ -164,33 +177,60 @@ with tabs[0]:
             (0.75, "#B13749"),
             (1.00, "#8F2F44")
         ]
-        zmax_value = np.percentile(winnings_matrix.values, 95)  # heatmap will account 93 percent of data so outliers wont skew heatmap sensetivity
+        zmax_value = np.percentile(winnings_matrix.values, 92)  # heatmap will account 93 percent of data so outliers wont skew heatmap sensetivity
         fig = px.imshow(
             winnings_matrix.values,
             x=winnings_matrix.columns,
             y=winnings_matrix.index,
             zmax=zmax_value,
-            labels=dict(color="Winnings"),
+            labels=dict(color="Winnings ($)"),
             color_continuous_scale=custom_colorscale,
             text_auto=False
-        )
-        fig.update_layout(
-            height=1200
         )
         fig.update_traces(
             text=label_matrix,
             texttemplate="%{text}",
             textfont_size=18,
-            # hovertemplate =
+            hovertemplate=("<b>Winnings:</b> %{z:$,.2f}<br>" + "<b>Card Pair:<b> %{text}<extra></extra>"),
+        )
+        fig.update_layout(
+            height=900,
+            width=900,
+            hoverlabel=dict(bgcolor="#0e1117", font_size=22),
+            coloraxis_colorbar=dict(showticklabels=False)
         )
         fig.update_xaxes(type='category', showticklabels=False, showline=False, zeroline=False)
         fig.update_yaxes(type='category', showticklabels=False, showline=False, zeroline=False)
-        st.plotly_chart(fig, use_container_width=True)
 
-    # 10 Biggest Pots Played
+        with st.columns([0.4, 1, 0.2])[1]:
+            st.plotly_chart(fig, use_container_width=False)
+        st.caption(
+            "High-value pairs like AA (two Aces) and KK (two Kings) dominate as the most profitable hands, reinforcing their reputation as premium starting hands. "
+            "These hands win consistently due to their high equity preflop and strong showdown value. "
+            "Meanwhile, suited and connected hands, such as suited broadways and small pocket pairs, can still generate solid returns under the right conditions—"
+            "particularly when played aggressively in position or when they hit strong postflop combinations like straights and flushes. "
+            "This highlights how profitability isn't just about raw hand strength but also about strategic factors like position, stack depth, and the ability to extract value from opponents."
+        )
+        with st.expander("SQL Query Used"):
+            query = """
+                SELECT
+                    gti.variant,
+                    gti.seat_count,
+                    pg.hand,
+                    SUM(winnings) AS winnings
+                FROM players_games AS pg
+                JOIN game_types_info AS gti
+                ON pg.game_id = gti.game_id
+                WHERE hand != '????'
+                GROUP BY pg.hand, gti.variant ,gti.seat_count
+                ORDER BY winnings DESC
+            """
+            st.code(query, "sql")
+
+    # Barchart - Top 10 Biggest Pots
     with st.container(border=True):
-        st.subheader(f"Biggest Pots Played")
-        st.caption("Top 10 final pot values for stake level & table type")
+        st.subheader(f"Top 10 Biggest Pots")
+        st.caption("Top 10 largest final pot size")
 
         # Slider & Dropdown for data selection
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
@@ -199,9 +239,9 @@ with tabs[0]:
                 'Stake Level', [25, 50, 100, 200, 400, 600, 1000], value=1000)
         with columns[3]:
             seat_count = st.selectbox("Table Type (Seat Count)", [6, 9])
-
         df_biggest_pots_filtered = df_ten_biggest_pots[(df_ten_biggest_pots['variant'] == variant) & (df_ten_biggest_pots['seat_count'] == seat_count)]
 
+        # Creating & Styling chart
         fig = px.bar(
             df_biggest_pots_filtered,
             x="game_id",
@@ -219,9 +259,10 @@ with tabs[0]:
             xaxis_type="category"
         )
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(
-            f"Wow. So much meaningful and insightful commnentary in this line of text. Simply Amazing")
 
+        # Insights & SQL used
+        st.caption("""This chart highlights the biggest hands played at the selected stake level and table type.
+                    The largest pots often indicate high-stakes confrontations, where strong hands, aggressive betting, or deep stacks create massive winnings""")
         with st.expander("SQL Query Used"):
             query = """
                 SELECT
@@ -238,12 +279,10 @@ with tabs[0]:
             """
             st.code(query, "sql")
 
-    # 10 Most Un/Profitable Players
+    # Double Barchart - Top 10 Most & Least Profitable Players
     with st.container(border=True):
-        # Title
-        header_placeholder = st.empty()
-        header_placeholder.subheader("Most Profitable Players")
-        st.caption("Top 10 most profitable for stake level & table type.")
+        st.subheader("Top 10 Most & Least Profitable Players")
+        st.caption("Comparing top winners and biggest losses")
 
         # Stake Level & Seat_Count Selection by user
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
@@ -253,7 +292,7 @@ with tabs[0]:
             seat_count = st.selectbox("Table Type (Seat Count)", [6, 9], key="ten_most_profitable_selectbox")
 
         columns = st.columns([1, 0.1, 1])
-        # Most profitable
+        # Barchart 2 - 10 Most profitable
         with columns[0]:
             df_ten_most_profitable_filtered = df_ten_most_profitable[(df_ten_most_profitable['variant'] == variant) & (df_ten_most_profitable['seat_count'] == seat_count)]
             df_ten_most_profitable_filtered.sort_values("amount_won", ascending=True, inplace=True)
@@ -273,6 +312,7 @@ with tabs[0]:
             fig.update_xaxes(tickfont_size=10)
 
             st.plotly_chart(fig, use_container_width=True)
+
             with st.expander("SQL Query Used"):
                 query = """
                     WITH player_winnings_by_type AS (
@@ -298,9 +338,8 @@ with tabs[0]:
                     WHERE rn <= 10;
                 """
                 st.code(query, "sql")
-            # st.caption(f"Wow. So much meaningful and insightful commnentary in this line of text. Simply Amazing")
 
-        # Most Loosing
+        # Barchart 1 - 10 Least Profitable
         with columns[2]:
             df_ten_least_profitable_filtered = df_ten_least_profitable[(df_ten_least_profitable['variant'] == variant) & (df_ten_least_profitable['seat_count'] == seat_count)]
             df_ten_least_profitable_filtered.sort_values("amount_won", ascending=False, inplace=True)
@@ -348,15 +387,17 @@ with tabs[0]:
 
             # st.caption(f"Wow. So much meaningful and insightful commnentary in this line of text. Simply Amazing")
 
+        st.caption("""This chart highlights the most profitable players (left) and the biggest losers (right) for the selected stake level and table type.
+                          The distribution shows that while some players accumulate significant winnings, others consistently lose large amounts—indicating variations in skill, strategy, or risk tolerance.""")
 
-# Positional Analysis
+# TAB 2 - Positional Analysis
 with tabs[1]:
     st.header("Positional Analysis")
 
-    # Action Frequencies Stacked bar chart
+    # StackedBars - Action Type Frequencies by Table Position
     with st.container(border=True):
-        st.subheader("Action Frequencies by Table Position")
-        st.caption("A heatmap showing how often each action (fold, check, call, raise) occurs in different positions at the table.")
+        st.subheader("Action Type Frequencies by Table Position")
+        st.caption("Breakdown of fold, raise, check, and call rates by position")
 
         # Slider & Dropdown for data selection
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
@@ -389,9 +430,9 @@ with tabs[1]:
                 "p8": "CO",
                 "p9": "BTN"
             }
-
         df_filtered = df_action_type_rates[(df_action_type_rates['variant'] == variant) & (df_action_type_rates['seat_count'] == seat_count)].copy()
 
+        # Preaparing Data for Chart
         df_long = df_filtered.melt(
             id_vars=["position"],  # These columns stay the same in every row (the identifier, like position)
             value_vars=["fold_rate", "check_rate", "call_rate", "raise_rate"],  # These columns will be "melted" into one
@@ -408,7 +449,8 @@ with tabs[1]:
             "raise_rate": "Raise Rate"},
         )
 
-        custom_colors = ["#D1495b", "#577399", "#74A57F", "#9ECE9A"]  # Example colors
+        # Creating & Styling chart
+        custom_colors = ["#D1495b", "#577399", "#74A57F", "#9ECE9A"]
         fig = px.bar(
             df_long,
             x="position",
@@ -420,9 +462,7 @@ with tabs[1]:
 
             color_discrete_sequence=custom_colors
         )
-        fig.update_traces(
-            texttemplate="%{y:.0f}%"
-        )
+        fig.update_traces(texttemplate="%{y:.0f}%")
         fig.update_layout(
             font=dict(size=18),
             xaxis=dict(tickfont_size=18, title_font_size=18),
@@ -432,14 +472,20 @@ with tabs[1]:
             barnorm="percent",
             legend_title_text="",
             legend=dict(font=dict(size=22))
-
         )
-        l, m, r = st.columns([0.5, 1.5, 0.5])
-        with m:
-            st.plotly_chart(fig, use_container_width=True)
-            st.caption("""Earlier positions fold more often but also raise decisively, reflecting a cautious yet aggressive approach when acting first. Meanwhile, the big blind shows the highest check rate, which makes sense given the option to see the flop for free if no one raises.
-                          Overall, these patterns illustrate how position strongly influences preflop decisions.""")
 
+        # Displaying Chart
+        with st.columns([0.5, 1.5, 0.5])[1]:
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Displaying Insights & SQL Used
+        st.caption(
+            "Earlier positions (UTG, MP) fold more often but also raise aggressively when they do enter a hand, "
+            "reflecting a cautious yet decisive approach due to acting first. As expected, later positions (CO, BTN) "
+            "raise more frequently, leveraging position to apply pressure. The small blind (SB) has a moderate balance of actions, "
+            "while the big blind (BB) has the highest check rate—given that it often sees the flop for free when no one raises. "
+            "Overall, this chart highlights how position heavily influences preflop strategy."
+        )
         with st.expander("SQL Query Used"):
             query = """
                 WITH actions_with_variant AS (
@@ -479,10 +525,10 @@ with tabs[1]:
                 ORDER BY a.variant, a.seat_count, a.position; """
             st.code(query, "sql")
 
-    # Average Winnings by Position
+    # Barchart - Average Winnings by Table Position
     with st.container(border=True):
-        st.subheader("Average Winnings by Position")
-        st.caption("The Average $ Won per Hand Played for every Position across stake level & table type")
+        st.subheader("Average Winnings by Table Position")
+        st.caption("The Average $ Won per Hand Played for every Position across stake levels")
 
         # Slider & Dropdown for data selection
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
@@ -516,15 +562,16 @@ with tabs[1]:
                 "p9": "BTN"
             }
 
+        # Preapering data for chart
         df_avgwinnings_filtered = df_avgwinnings[(df_avgwinnings['seat_count'] == seat_count) & (df_avgwinnings['variant'] == variant)].copy()
         df_avgwinnings_filtered['position'] = df_avgwinnings_filtered['position'].replace(custom_labels)
         df_avgwinnings_filtered['position'] = pd.Categorical(df_avgwinnings_filtered['position'], categories=position_order, ordered=True)
         df_avgwinnings_filtered = df_avgwinnings_filtered.sort_values(by="position")
 
+        # Creating & Styling the Chart
         colors = ["#D1495B"] * len(df_avgwinnings_filtered)
         colors[-1] = "#577399"
         colors[-2] = "#577399"
-
         fig = px.bar(
             df_avgwinnings_filtered,
             x='position',
@@ -540,11 +587,17 @@ with tabs[1]:
             marker_color=colors
         )
         fig.update_xaxes(tickfont_size=16)
+        # Displaying chart
         st.plotly_chart(fig)
-        st.caption("""
-            From left to right, the early positions (UTG, MP, CO) usually see moderate gains, while the Button (BTN) often stands out with the highest average winnings, thanks to acting last and facing fewer opponents. In contrast, both blinds (SB and BB) frequently show net losses, reflecting their forced bets and weaker positional advantage. Overall, these trends reinforce how critical position is in poker—later seats typically have the edge in decision-making and pot control, while the blinds bear the cost of mandatory bets and more complex postflop scenarios.
-        """)
 
+        # Displaying insights & SQL used
+        st.caption(
+            "From left to right, the early positions (UTG, MP, CO) usually see moderate gains, while the Button (BTN) "
+            "often stands out with the highest average winnings, thanks to acting last and facing fewer opponents. "
+            "In contrast, both blinds (SB and BB) frequently show net losses, reflecting their forced bets and weaker positional advantage. "
+            "Overall, these trends reinforce how critical position is in poker—later seats typically have the edge in decision-making and pot control, "
+            "while the blinds bear the cost of mandatory bets and more complex postflop scenarios."
+        )
         with st.expander("SQL Query Used"):
             query = """
                 SELECT
@@ -560,12 +613,12 @@ with tabs[1]:
                 GROUP BY pg.position, g.seat_count, g.variant; """
             st.code(query, "sql")
 
-    # VPIP% & PFR% by Position
+    # Barchart - VPIP% & PFR% by Table Position
     with st.container(border=True):
         st.subheader("VPIP & PFR Percentages by Table Position")
         st.caption("Bar chart that shocases how often players voluntarily put money into the pot (VPIP) versus how frequently they raise preflop (PFR), broken down by each seat at the table")
 
-        # Slider & Dropdown for data selection
+        # Slider & Dropdown for stake level selection
         columns = st.columns([0.1, 1, 0.1, 1, 0.1])
         with columns[1]:
             variant = st.select_slider('Stake Level', [25, 50, 100, 200, 400, 600, 1000], value=1000, key="vpip_pfr_sld")
@@ -596,11 +649,14 @@ with tabs[1]:
                 "p9": "BTN"
             }
 
+        # Preparing data for chart
         df_filtered = df_vpip_pfr_percentages[(df_vpip_pfr_percentages['seat_count'] == seat_count) & (df_vpip_pfr_percentages['variant'] == variant)].copy()
         df_filtered['position'] = df_filtered['position'].replace(custom_labels)
         df_filtered['position'] = pd.Categorical(df_filtered['position'], categories=position_order, ordered=True)
         df_filtered = df_filtered.sort_values(by="position")
         df_filtered.rename(columns={"vpip_percentage": "VPIP %", "pfr_percentage": "PFR %"}, inplace=True)
+
+        # Creating & Styling chart
         fig = px.bar(
             df_filtered,
             x="position",
@@ -609,8 +665,6 @@ with tabs[1]:
             labels={"position": "Position", "value": "Percentage (%)"},
             height=750,
             color_discrete_sequence=["#D1495B", "#577399"]
-
-            # color=["#D1495b", "#577399"]*3
         )
         fig.update_layout(
             font=dict(size=14),
@@ -630,10 +684,18 @@ with tabs[1]:
             )
         )
         fig.update_traces(texttemplate="%{y:.2f}%", textposition="outside", textfont_size=20,)
+
+        # Displaying chart
         st.plotly_chart(fig)
-        st.caption("""Observing these numbers, you’ll notice that players in late positions (like the cutoff and button) often raise more before the flop.
-                    They’re in the best spots to steal blinds and face fewer opponents after them. Early positions, on the other hand, might have moderate or even higher VPIP (they see more flops), but they’re less likely to open-raise because they have to worry about the rest of the table acting behind them.
-                    Interestingly, the small blind sometimes shows a high PFR too, possibly from the pressure to defend or grab the pot immediately. Meanwhile, the big blind tends to be more selective, focusing on hands that can stand up to raises. """)
+
+        # Displaying insights & SQL used
+        st.caption(
+            "Observing these numbers, you’ll notice that players in late positions (like the cutoff and button) often raise more before the flop. "
+            "They’re in the best spots to steal blinds and face fewer opponents after them. Early positions, on the other hand, might have moderate or even higher VPIP "
+            "(they see more flops), but they’re less likely to open-raise because they have to worry about the rest of the table acting behind them. "
+            "Interestingly, the small blind sometimes shows a high PFR too, possibly from the pressure to defend or grab the pot immediately. "
+            "Meanwhile, the big blind tends to be more selective, focusing on hands that can stand up to raises."
+        )
         with st.expander("SQL Query Used"):
             query = """
                 WITH sorted_actions AS (
@@ -659,24 +721,24 @@ with tabs[1]:
                     ORDER BY a.variant, a.seat_count, a.position
                 ),
                 total_hands_dealt AS(
-                    SELECT 
+                    SELECT
                         gti.variant,
                         gti.seat_count,
                         pg.position,
-                        COUNT(*) AS total_hands 
+                        COUNT(*) AS total_hands
                     FROM players_games AS pg
                     JOIN game_types_info AS gti
                     ON pg.game_id = gti.game_id
                     GROUP BY pg.position, gti.variant, gti.seat_count
                 )
-                SELECT 
+                SELECT
                     a.*,
                     thd.total_hands,
                     ROUND(a.vpip_actions_performed * 100.0 / thd.total_hands, 2) AS vpip_percentage,
                     ROUND(a.pfr_actions_performed * 100.0 / thd.total_hands, 2) AS pfr_percentage
                 FROM vpip_pfr_counts AS a
                 JOIN total_hands_dealt AS thd
-                    ON thd.position = a.position 
-                    AND thd.variant = a.variant 
+                    ON thd.position = a.position
+                    AND thd.variant = a.variant
                     AND a.seat_count = thd.seat_count"""
             st.code(query, "sql")
