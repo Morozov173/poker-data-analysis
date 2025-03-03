@@ -94,7 +94,7 @@ df_ten_least_profitable = pd.read_csv("dashboard_data/ten_least_profitable.csv")
 df_action_type_rates = pd.read_csv("dashboard_data/action_type_rates.csv")
 df_vpip_pfr_percentages = pd.read_csv("dashboard_data/vpip_pfr_percentages.csv")
 df_winnings_by_hand = pd.read_csv("dashboard_data/winnings_by_hand.csv")
-
+df_vpip_pfr_3bet_across_stakes = pd.read_csv("dashboard_data/vpip_pfr_3bet_across_stakes.csv")
 
 # Main App logic:
 
@@ -742,3 +742,161 @@ with tabs[1]:
                     AND thd.variant = a.variant
                     AND a.seat_count = thd.seat_count"""
             st.code(query, "sql")
+
+# TAB 3 - Trends Across Stake Levels
+with tabs[2]:
+
+    # Linechart - VPIP, PFR, 3BET Percentages across stake levels
+    with st.container(border=True):
+        st.subheader(f"VPIP, PFR & 3BET Percentages By Stake Level")
+        st.caption("fill")  # TODO Fill
+
+        # Slider & Dropdown for data selection
+        columns = st.columns([0.1, 1, 0.1, 1, 0.1])
+        with columns[1]:
+            seat_count = st.selectbox("Table Type (Seat Count)", [9, 6], key="trends_across_stakes_slctbx")
+
+        # Filtering & Preparing Data for chart
+        df_filtered = df_vpip_pfr_3bet_across_stakes[(df_vpip_pfr_3bet_across_stakes['seat_count'] == seat_count)]
+        df_filtered.rename(columns={"vpip": "VPIP %", "pfr": "PFR %", "threebet": "3BET %"}, inplace=True)
+
+        # Creating & Styling chart
+        fig = px.line(
+            df_filtered,
+            x="variant",
+            y=["VPIP %", "PFR %", "3BET %"],
+            labels={"variant": "Stake Level", "Value": "Percentages (%)"},
+            color_discrete_sequence=["#74A57F",  "#577399", "#D1495B"],
+            markers=True,
+        )
+        fig.update_layout(
+            height=750,
+            xaxis_type="category",
+            legend_title_text="",
+            legend=dict(
+                font=dict(size=24),
+                bgcolor="#171C26",
+                bordercolor="#D3FFF3",
+                borderwidth=0.2,
+            ),
+        )
+        for trace in fig.data:
+            trace.mode = "lines+markers+text"
+            trace.text = [f'{y:.2f}' for y in trace.y]
+            trace.textposition = 'top center'
+            if trace.name == "VPIP %":
+                trace.visible = "legendonly"
+        fig.update_traces(line=dict(width=6), marker=dict(size=14), texttemplate='%{y:.2f}%', textposition='top center', textfont=dict(size=16))
+
+        # Displaying Chart
+        st.plotly_chart(fig)
+
+        # Insights & SQL used
+        st.caption("TODO: fill")
+        with st.expander("SQL Query Used"):
+            query = """
+                WITH sorted_actions AS(
+                    -- Get actions for round 0, calculate the running total of raises per game across all actions. add variant and seat_count for each action
+                    SELECT 
+                        gti.variant,
+                        gti.seat_count,
+                        a.game_id,
+                        a.action_id,
+                        a.position,
+                        a.action_type,
+                        a.amount,
+                        SUM(CASE WHEN action_type = 'cbr' THEN 1 ELSE 0 END) OVER (PARTITION BY a.game_id ORDER BY a.action_id) AS raises_per_game
+                    FROM actions AS a
+                    JOIN game_types_info AS gti
+                    ON a.game_id = gti.game_id
+                    WHERE round = 0
+                ),
+                numbered_raises AS (
+                    -- For each game number all the raises that happened pre-flop in chronological order 
+                    SELECT
+                        seat_count,
+                        variant,
+                        ROW_NUMBER () OVER (PARTITION BY a.game_id ORDER BY a.action_id) AS raise_number
+                    FROM sorted_actions AS a
+                    WHERE action_type = 'cbr'
+                ),
+                pfr_threebet_counts AS (
+                    -- Summarize counts of first raises (PFR) and second raises (threebet) by variant and seat_count.
+                    SELECT
+                        seat_count,
+                        variant,
+                        SUM(CASE WHEN raise_number=1 THEN 1 ELSE 0 END) AS pfr_count,
+                        SUM(CASE WHEN raise_number=2 THEN 1 ELSE 0 END) AS threebet_count
+                    FROM numbered_raises
+                    GROUP BY seat_count, variant
+                ),
+                opportunities_to_threebet_by_variant AS(
+                    -- For each game, count the threebet opportunities provided and sum them as threebet_opportunity_count. Then aggregate by variant and seat_count.
+                    SELECT
+                        seat_count,
+                        variant,
+                        SUM (threebet_opportunity_count) AS opportunities_to_threebet
+                    FROM (
+                        SELECT 
+                            game_id,
+                            MAX(seat_count) AS seat_count,
+                            MAX(variant) AS variant,
+                            CASE 
+                                WHEN SUM(CASE WHEN raises_per_game = 1 THEN 1 ELSE 0 END) > 0
+                                THEN SUM(CASE WHEN raises_per_game = 1 THEN 1 ELSE 0 END) - 1
+                                ELSE 0 END AS threebet_opportunity_count
+                        FROM sorted_actions
+                        GROUP BY game_id ) AS threebet_opportunites_per_game
+                    GROUP BY seat_count, variant
+                ),
+                vpip_counts_table AS(
+                    -- Counts total vpip actions and aggregates by variant & seat_count
+                    SELECT 
+                        variant,
+                        seat_count,
+                        COUNT(DISTINCT (game_id, sorted_actions.position)) AS vpip_count
+                    FROM sorted_actions
+                    WHERE amount > 0 
+                    GROUP BY variant, seat_count
+                ),
+                total_count_table AS(
+                    -- Counts the total number of hands per variant and seat_count.
+                    SELECT 
+                        gti.variant,
+                        gti.seat_count,
+                        COUNT(*) AS total_count
+                    FROM players_games AS pg
+                    JOIN game_types_info AS gti
+                    ON pg.game_id = gti.game_id
+                    GROUP BY gti.variant, gti.seat_count
+                ),
+                complete_counts AS(
+                    -- Joins all the caclulated counts into one table.
+                    SELECT 
+                        og.variant,
+                        og.seat_count,
+                        vc.vpip_count,
+                        og.pfr_count,
+                        og.threebet_count,
+                        ott.opportunities_to_threebet,
+                        tc.total_count
+                    FROM pfr_threebet_counts AS og
+                    JOIN vpip_counts_table AS vc
+                    ON vc.variant = og.variant AND vc.seat_count = og.seat_count
+                    JOIN opportunities_to_threebet_by_variant AS ott
+                    ON ott.variant = og.variant AND ott.seat_count = og.seat_count
+                    JOIN total_count_table AS tc
+                    ON tc.variant = og.variant AND tc.seat_count = og.seat_count
+                )
+                SELECT
+                    -- compute percentages for VPIP, PFR, and threebet using the complete_counts table.
+                    seat_count,
+                    variant,
+                    ROUND(vpip_count * 100.0 / total_count, 2) AS vpip,
+                    ROUND(pfr_count * 100.0 / total_count, 2) AS pfr,
+                    ROUND(threebet_count * 100.0 / opportunities_to_threebet, 2) AS threebet
+                FROM complete_counts
+                WHERE total_hands > 1000
+                ORDER BY seat_count, variant
+                """
+            st.code(query, 'sql')
