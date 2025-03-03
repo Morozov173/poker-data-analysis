@@ -86,15 +86,20 @@ def create_matrices(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return df_labels, df_winnings
 
 
-# Loading data for visualization TODO: Caching
-df_ten_biggest_pots = pd.read_csv("dashboard_data/ten_biggest_pots.csv")
-df_avgwinnings = pd.read_csv("dashboard_data/avg_winnings.csv")
-df_ten_most_profitable = pd.read_csv("dashboard_data/ten_most_profitable.csv")
-df_ten_least_profitable = pd.read_csv("dashboard_data/ten_least_profitable.csv")
-df_action_type_rates = pd.read_csv("dashboard_data/action_type_rates.csv")
-df_vpip_pfr_percentages = pd.read_csv("dashboard_data/vpip_pfr_percentages.csv")
-df_winnings_by_hand = pd.read_csv("dashboard_data/winnings_by_hand.csv")
-df_vpip_pfr_3bet_across_stakes = pd.read_csv("dashboard_data/vpip_pfr_3bet_across_stakes.csv")
+# Loads & caches the require data for the visualizations
+@st.cache_data
+def load_data(file_path):
+    return pd.read_csv(file_path)
+
+
+df_ten_biggest_pots = load_data("dashboard_data/ten_biggest_pots.csv")
+df_avgwinnings = load_data("dashboard_data/avg_winnings.csv")
+df_ten_most_profitable = load_data("dashboard_data/ten_most_profitable.csv")
+df_ten_least_profitable = load_data("dashboard_data/ten_least_profitable.csv")
+df_action_type_rates = load_data("dashboard_data/action_type_rates.csv")
+df_vpip_pfr_percentages = load_data("dashboard_data/vpip_pfr_percentages.csv")
+df_winnings_by_hand = load_data("dashboard_data/winnings_by_hand.csv")
+df_vpip_pfr_3bet_across_stakes = load_data("dashboard_data/vpip_pfr_3bet_across_stakes.csv")
 
 # Main App logic:
 
@@ -792,7 +797,16 @@ with tabs[2]:
         st.plotly_chart(fig)
 
         # Insights & SQL used
-        st.caption("TODO: fill")
+        st.caption("""
+        On both 9 & 6 player tables, the data reveals a marked increase in both 3Bet and PFR percentages as stakes rise, 
+        nearly doubling from the lowest to the highest levels.
+        This suggests that higher-stakes play is characterized by a more aggressive and confident approach, 
+        likely reflecting more refined skills and decisiveness.
+        In contrast, VPIP remains fairly stable across all stakes, indicating that while players aren’t 
+        necessarily entering more pots at higher stakes, they do engage more aggressively when they do.
+        Overall, these trends underscore how table format and stake level influence preflop strategy, with 
+        full-ring games displaying a more pronounced shift toward aggression at elevated stakes.
+        """)
         with st.expander("SQL Query Used"):
             query = """
                 WITH sorted_actions AS(
