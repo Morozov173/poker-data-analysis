@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from plotly.graph_objects import Figure
-from sqlalchemy import create_engine
+from pathlib import Path
 st.set_page_config(page_title="Poker Analysis", layout='wide', initial_sidebar_state="collapsed", )  # page_icon="🃏"
 
 
@@ -86,20 +86,25 @@ def create_matrices(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return df_labels, df_winnings
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+
 # Loads & caches the require data for the visualizations
+
+
 @st.cache_data
 def load_data(file_path):
     return pd.read_csv(file_path)
 
 
-df_ten_biggest_pots = load_data("../data/ten_biggest_pots.csv")
-df_avgwinnings = load_data("../data/avg_winnings.csv")
-df_ten_most_profitable = load_data("../data/ten_most_profitable.csv")
-df_ten_least_profitable = load_data("../data/ten_least_profitable.csv")
-df_action_type_rates = load_data("../data/action_type_rates.csv")
-df_vpip_pfr_percentages = load_data("../data/vpip_pfr_percentages.csv")
-df_winnings_by_hand = load_data("../data/winnings_by_hand.csv")
-df_vpip_pfr_3bet_across_stakes = load_data("../data/vpip_pfr_3bet_across_stakes.csv")
+df_ten_biggest_pots = load_data(DATA_DIR / "ten_biggest_pots.csv")
+df_avgwinnings = load_data(DATA_DIR / "avg_winnings.csv")
+df_ten_most_profitable = load_data(DATA_DIR / "ten_most_profitable.csv")
+df_ten_least_profitable = load_data(DATA_DIR / "ten_least_profitable.csv")
+df_action_type_rates = load_data(DATA_DIR / "action_type_rates.csv")
+df_vpip_pfr_percentages = load_data(DATA_DIR / "vpip_pfr_percentages.csv")
+df_winnings_by_hand = load_data(DATA_DIR / "winnings_by_hand.csv")
+df_vpip_pfr_3bet_across_stakes = load_data(DATA_DIR / "vpip_pfr_3bet_across_stakes.csv")
 
 # Main App logic:
 
