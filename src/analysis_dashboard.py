@@ -92,14 +92,14 @@ def load_data(file_path):
     return pd.read_csv(file_path)
 
 
-df_ten_biggest_pots = load_data("dashboard_data/ten_biggest_pots.csv")
-df_avgwinnings = load_data("dashboard_data/avg_winnings.csv")
-df_ten_most_profitable = load_data("dashboard_data/ten_most_profitable.csv")
-df_ten_least_profitable = load_data("dashboard_data/ten_least_profitable.csv")
-df_action_type_rates = load_data("dashboard_data/action_type_rates.csv")
-df_vpip_pfr_percentages = load_data("dashboard_data/vpip_pfr_percentages.csv")
-df_winnings_by_hand = load_data("dashboard_data/winnings_by_hand.csv")
-df_vpip_pfr_3bet_across_stakes = load_data("dashboard_data/vpip_pfr_3bet_across_stakes.csv")
+df_ten_biggest_pots = load_data("../data/ten_biggest_pots.csv")
+df_avgwinnings = load_data("../data/avg_winnings.csv")
+df_ten_most_profitable = load_data("../data/ten_most_profitable.csv")
+df_ten_least_profitable = load_data("../data/ten_least_profitable.csv")
+df_action_type_rates = load_data("../data/action_type_rates.csv")
+df_vpip_pfr_percentages = load_data("../data/vpip_pfr_percentages.csv")
+df_winnings_by_hand = load_data("../data/winnings_by_hand.csv")
+df_vpip_pfr_3bet_across_stakes = load_data("../data/vpip_pfr_3bet_across_stakes.csv")
 
 # Main App logic:
 

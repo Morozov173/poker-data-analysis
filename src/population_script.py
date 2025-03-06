@@ -3,7 +3,6 @@ import os
 import pandas as pd
 import re
 import ast
-import mysql.connector
 import psycopg2
 from treys import Card, Evaluator
 import itertools
@@ -37,7 +36,7 @@ def is_number(s: str) -> bool:
 
 
 # Reads a PHHS file and parses its content into a list of hand dictionaries.
-def read_hands_from_phhs(file_path: str) -> list[dict[str, Any]]:
+def read_hands_from_phhs(file_path: str) -> list[dict]:
     with open(file_path, 'r') as file:
         content = file.read()
 
@@ -470,11 +469,9 @@ def process_hands(path_to_phhs_file: str, shared_game_id: managers.DictProxy, lo
         bb_amount = hand['blinds_or_straddles'][1]
         starting_pot = sum(hand['blinds_or_straddles'])
 
-        game_type_id = find_game_type(
-            df_game_types, hand['seat_count'], sb_amount, bb_amount, hand['currency_symbol'])
+        game_type_id = find_game_type(df_game_types, hand['seat_count'], sb_amount, bb_amount, hand['currency_symbol'])
 
-        df_bets_in_hand = create_bets_array(
-            hand['blinds_or_straddles'], amount_of_players)
+        df_bets_in_hand = create_bets_array(hand['blinds_or_straddles'], amount_of_players)
 
         current_hand_actions, unrecoverable_data_detected, last_to_bet, end_pot = process_actions_in_hand(
             hand['actions'], amount_of_players, community_cards, hole_cards, df_bets_in_hand, sb_amount, bb_amount, game_id)
@@ -572,17 +569,14 @@ def main():
     logger.info(f"MESSAGE: Most recent GAME_ID:{shared_game_id['game_id']} Fetched from database.")
     logger.info(f"MESSAGE: Amount of cpu cores detected - {os.cpu_count()}\n")
 
-    root_dir = Path(r"D:\Programming\Poker Hands Dataset Zendoo\handhq")
-    start_parsing, starting_file_path, skip_first_file = determine_starting_file_for_parsing(
-        shared_game_id['game_id'])
-    phhs_generator = create_generator_of_phhs_batches(
-        root_dir, start_parsing, starting_file_path, skip_first_file)
+    root_dir = Path(os.getenv("ROOT_DIR"))
+    start_parsing, starting_file_path, skip_first_file = determine_starting_file_for_parsing(shared_game_id['game_id'])
+    phhs_generator = create_generator_of_phhs_batches(root_dir, start_parsing, starting_file_path, skip_first_file)
 
     files_read_counter = 0
     batches_processed_counter = 1
     for batch in phhs_generator:
-        logger.info(
-            f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Started Processing of batch")
+        logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Started Processing of batch")
         batch_start_time = time.time()
         file_parsed_succesfully = True
 
@@ -594,19 +588,15 @@ def main():
 
         # Multiprocesses the parsing and formatting of data
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            print(
-                f"starting game_id shared variable is: {shared_game_id['game_id']}")
-            futures = [executor.submit(
-                process_hands, file_path, shared_game_id, lock) for file_path in batch]
+            print(f"starting game_id shared variable is: {shared_game_id['game_id']}")
+            futures = [executor.submit(process_hands, file_path, shared_game_id, lock) for file_path in batch]
             for future in futures:
                 games, players_games, actions, players_static = future.result()
 
                 all_games = list(itertools.chain(all_games, games))
-                all_players_games = list(itertools.chain(
-                    all_players_games, players_games))
+                all_players_games = list(itertools.chain(all_players_games, players_games))
                 all_actions = list(itertools.chain(all_actions, actions))
-                all_players_static = list(itertools.chain(
-                    all_players_static, players_static))
+                all_players_static = list(itertools.chain(all_players_static, players_static))
 
         # Set up connection to DB.
         try:
@@ -628,20 +618,17 @@ def main():
             INSERT INTO games (game_id, game_type_id, amount_of_players, flop, turn, river, final_pot)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            execute_bulk_insert(insert_games_query, all_games, connection,
-                                commit=False, flatten=False, close_connection=False)
+            execute_bulk_insert(insert_games_query, all_games, connection, commit=False, flatten=False, close_connection=False)
 
             insert_players_games_query = """
             INSERT INTO players_games (game_id, player_id, starting_stack, position, hand, winnings)
             VALUES (%s, %s, %s, %s, %s, %s) """
-            execute_bulk_insert(insert_players_games_query, all_players_games,
-                                connection, commit=False, flatten=True, close_connection=False)
+            execute_bulk_insert(insert_players_games_query, all_players_games, connection, commit=False, flatten=True, close_connection=False)
 
             insert_actions_query = """
             INSERT INTO actions (game_id, action_id, position, action_type, round, amount, pot_size)
             VALUES (%s, %s, %s, %s, %s, %s, %s) """
-            execute_bulk_insert(insert_actions_query, all_actions, connection,
-                                commit=False, flatten=True, close_connection=False)
+            execute_bulk_insert(insert_actions_query, all_actions, connection, commit=False, flatten=True, close_connection=False)
 
             insert_players_static_query = """
             INSERT INTO players_static (player_id, total_winnings)
@@ -649,10 +636,9 @@ def main():
             ON CONFLICT (player_id) 
             DO UPDATE 
             SET total_winnings = players_static.total_winnings + EXCLUDED.total_winnings,
-                hands_played  = players_static.hands_played + 1
+            hands_played  = players_static.hands_played + 1
             """
-            execute_bulk_insert(insert_players_static_query, all_players_static,
-                                connection, commit=False, flatten=False, close_connection=False)
+            execute_bulk_insert(insert_players_static_query, all_players_static, connection, commit=False, flatten=False, close_connection=False)
 
             connection.commit()
             print("All tables were commited succesfully")
@@ -661,31 +647,25 @@ def main():
             connection.rollback()
             cursor.close()
             connection.close()
-            logger.exception(
-                f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Keyboard Interrupt detected. Cleaning up before exit.")
+            logger.exception(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Keyboard Interrupt detected. Cleaning up before exit.")
             end_time = time.time()
 
         except Exception as e:
             file_parsed_succesfully = False
             connection.rollback()
-            logger.exception(
-                f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Insert or Commit raised an Error when executing into DB.")
+            logger.exception(f"BATCH_ID {batches_processed_counter}:GAME_ID {shared_game_id['game_id']}:MESSAGE: Insert or Commit raised an Error when executing into DB.")
 
         if file_parsed_succesfully:
             for file_path in batch:
                 logger.info(f"Succesfully processed and inserted: {file_path}")
-            logger.info(
-                f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: COMPLETED processing batch of files succesfully\n")
+            logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: COMPLETED processing batch of files succesfully\n")
 
             with open('last_processed_file', "w") as file:
-                file.writelines(
-                    [f"LAST PROCESSED FILE OF BATCH:{batch[-1]}\n", "SUCCESFULL"])
+                file.writelines([f"LAST PROCESSED FILE OF BATCH:{batch[-1]}\n", "SUCCESFULL"])
         else:
-            logger.info(
-                f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: FAILED processing batch of files.")
+            logger.info(f"BATCH_ID {batches_processed_counter}:GAME_ID:{shared_game_id['game_id']}:MESSAGE: FAILED processing batch of files.")
             with open('last_processed_file', "w") as file:
-                file.writelines(
-                    [f"FIRST PROCESSED FILE OF BATCH:{batch[0]}\n", "UNSUCCESFULL"])
+                file.writelines([f"FIRST PROCESSED FILE OF BATCH:{batch[0]}\n", "UNSUCCESFULL"])
 
         files_read_counter += len(batch)
         batches_processed_counter += 1
@@ -698,8 +678,7 @@ def main():
     connection.close()
 
     end_time = time.time()
-    performance_logger.info(
-        f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours or {(end_time - start_time):.2f} seconds")
+    performance_logger.info(f"total time to process {files_read_counter} batches took {(end_time - start_time)/3600:.2f} hours or {(end_time - start_time):.2f} seconds")
     logger.info(f"Succesfully inserted all hands into DB!")
 
 

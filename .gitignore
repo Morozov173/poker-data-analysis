@@ -8,3 +8,4 @@ temp.py
 
 # ignore .env
 .env
+.venv
