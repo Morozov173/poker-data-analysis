@@ -3,7 +3,7 @@
 This project analyzes over 20 million poker hand histories stored in the Poker Hand History Standard (PHHS) format. Using PostgreSQL for data storage and SQL for data aggregation, the data is cleaned and transformed with Python and visualized interactively using Plotly and Streamlit.
 
 ## Demo
-you can acess the live demo here: https://poker-analysis-dashboard.streamlit.app/
+you can acess the live demo here: https://poker-data-analysis.streamlit.app/
 
 
 
