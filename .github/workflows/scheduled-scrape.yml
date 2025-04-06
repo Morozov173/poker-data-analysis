@@ -22,14 +22,14 @@ jobs:
       #    (Adjust this if you install via different method)
       - name: Install UltraViolet
         run: |
-          pip install --upgrade pip
-          pip install ultraviolet
+          python -m pip install --upgrade pip
+          python -m pip install ultraviolet
 
       # 3. Run the scraper script via uv
       #    If your script is named main.py in the repo root:
       - name: Run scraper with UltraViolet
         run: |
-          python -m uv run main.py
+          python -m uv run main.py  
 
       # 4. Commit and push any changes
       - name: Commit and push changes
