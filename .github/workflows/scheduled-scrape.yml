@@ -29,6 +29,11 @@ jobs:
 
       - name: Install the project
         run: uv sync --all-extras --dev
+
+      - name: Debug List files
+        run: |
+          pwd
+          ls -R
       
       # 4. Run the scraper script via uv
       #    If your script is named main.py in the repo root:
